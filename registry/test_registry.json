@@ -1,0 +1,62 @@
+{
+  "PHD-IOS-AUTO-0001": {
+    "stable_case_id": "PHD-IOS-AUTO-0001",
+    "case_name": "test_03_01_06_1",
+    "test_file": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py",
+    "test_nodeid": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py::Test_SFT_sce_01::test_03_01_06_1",
+    "feature": "_SFT_sce_01",
+    "priority": "P2",
+    "blocking_type": "non-blocking",
+    "app_area": null,
+    "primary_test_component": null,
+    "identity_complete": false
+  },
+  "PHD-IOS-AUTO-0002": {
+    "stable_case_id": "PHD-IOS-AUTO-0002",
+    "case_name": "test_03_01_06_1",
+    "test_file": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py",
+    "test_nodeid": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py::Test_SFT_sce_01::test_03_01_06_1",
+    "feature": "_SFT_sce_01",
+    "priority": "P2",
+    "blocking_type": "non-blocking",
+    "app_area": null,
+    "primary_test_component": null,
+    "identity_complete": false
+  },
+  "PHD-IOS-AUTO-0003": {
+    "stable_case_id": "PHD-IOS-AUTO-0003",
+    "case_name": "test_03_01_06_1",
+    "test_file": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py",
+    "test_nodeid": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py::Test_SFT_sce_01::test_03_01_06_1",
+    "feature": "_SFT_sce_01",
+    "priority": "P2",
+    "blocking_type": "non-blocking",
+    "app_area": null,
+    "primary_test_component": null,
+    "identity_complete": false
+  },
+  "PHD-IOS-AUTO-0004": {
+    "stable_case_id": "PHD-IOS-AUTO-0004",
+    "case_name": "test_03_01_06_1",
+    "test_file": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py",
+    "test_nodeid": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py::Test_SFT_sce_01::test_03_01_06_1",
+    "feature": "_SFT_sce_01",
+    "priority": "P2",
+    "blocking_type": "non-blocking",
+    "app_area": null,
+    "primary_test_component": null,
+    "identity_complete": false
+  },
+  "PHD-IOS-AUTO-0005": {
+    "stable_case_id": "PHD-IOS-AUTO-0005",
+    "case_name": "test_03_01_06_1",
+    "test_file": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py",
+    "test_nodeid": "SFT/tests/test_pytest_iPHD_SFT_sce_01.py::Test_SFT_sce_01::test_03_01_06_1",
+    "feature": "_SFT_sce_01",
+    "priority": "P2",
+    "blocking_type": "non-blocking",
+    "app_area": null,
+    "primary_test_component": null,
+    "identity_complete": false
+  }
+}
