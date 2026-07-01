@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 自動化測試 Auto-Healing 系統導入計畫</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+      background: #f4f6f8;
+      color: #1f2933;
+      line-height: 1.65;
+      padding: 32px 16px;
+    }
+    .container { max-width: 1040px; margin: 0 auto; }
+    .header {
+      background: #102a43;
+      color: #fff;
+      border-radius: 10px;
+      padding: 28px 32px;
+      margin-bottom: 18px;
+      box-shadow: 0 8px 24px rgba(16,42,67,.14);
+    }
+    .header h1 { font-size: 28px; line-height: 1.25; margin-bottom: 8px; }
+    .subtitle { color: #d9e2ec; font-size: 15px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #d9e2ec;
+      color: #102a43;
+    }
+    .badge.warn { background: #fffbeb; color: #92400e; }
+    .badge.ok { background: #d1fae5; color: #065f46; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .card {
+      grid-column: span 12;
+      background: #fff;
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 22px 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 10px rgba(16,42,67,.05);
+    }
+    .half { grid-column: span 6; }
+    .third { grid-column: span 4; }
+    h2 {
+      font-size: 18px;
+      color: #102a43;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e4e7eb;
+    }
+    h3 { font-size: 15px; color: #243b53; margin: 16px 0 8px; }
+    p { margin-bottom: 10px; }
+    ul, ol { padding-left: 22px; margin: 8px 0; }
+    li { margin: 4px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin: 10px 0 4px;
+    }
+    th, td {
+      border-bottom: 1px solid #e4e7eb;
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4f8;
+      color: #52606d;
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    code {
+      background: #f0f4f8;
+      color: #102a43;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .92em;
+    }
+    pre {
+      background: #102a43;
+      color: #f0f4f8;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+    .callout {
+      background: #f0f9ff;
+      border-left: 4px solid #0284c7;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .risk {
+      background: #fffbeb;
+      border-left: 4px solid #d97706;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .decision {
+      background: #f0fdf4;
+      border-left: 4px solid #16a34a;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .review-item {
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .review-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+    .rv-check { width: 18px; height: 18px; margin-top: 4px; accent-color: #102a43; }
+    .ri-title { display: block; font-weight: 700; color: #102a43; }
+    .ri-meta { display: block; color: #627d98; font-size: 13px; margin-top: 2px; }
+    .rv-feedback {
+      width: 100%;
+      min-height: 40px;
+      resize: vertical;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-top: 8px;
+      font: inherit;
+      font-size: 14px;
+    }
+    .review-footer {
+      background: #102a43;
+      color: #fff;
+      border-radius: 10px;
+      padding: 24px;
+      text-align: center;
+      margin-top: 18px;
+    }
+    .review-footer p { color: #d9e2ec; }
+    .rv-global {
+      width: 100%;
+      max-width: 680px;
+      min-height: 64px;
+      resize: vertical;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+      margin: 10px 0;
+    }
+    .rv-done-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 10px 28px;
+      background: #38bdf8;
+      color: #082f49;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .rv-saved {
+      display: none;
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.12);
+      text-align: left;
+      color: #e0f2fe;
+      font-size: 14px;
+    }
+    @media (max-width: 760px) {
+      .half, .third { grid-column: span 12; }
+      .header { padding: 22px; }
+      .card { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <section class="header">
+    <h1>AI 自動化測試 Auto-Healing 系統導入計畫</h1>
+    <div class="subtitle">目標產品：PHD iOS 影像編輯 App UI 自動化測試</div>
+    <div class="meta">
+      <span class="badge">計畫書</span>
+      <span class="badge warn">複雜度：High</span>
+      <span class="badge ok">目標成熟度：L3</span>
+      <span class="badge">產生時間：2026-06-24 15:10</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>一、主管摘要</h2>
+    <div class="decision">
+      本計畫不是要讓 AI 直接取代測試判斷，而是建立一層 <strong>AI Test Maintenance Layer</strong>，協助自動化測試在失敗時收集證據、分析 root cause、修復低風險測試路徑 drift，並產出可審核的 HTML 報告與 PR。
+    </div>
+    <p>第一階段以 Auto-Healing / Failure Handling 為主，先解決 UI 自動化測試維護成本高、失敗原因判斷耗時、測試結果容易被 network/server busy 或 dependency cascade 污染的問題。</p>
+    <p>系統的核心原則是保護品質訊號：AI 可以修復低風險測試路徑 drift，但不修改 assertion、不自動 merge。AI 修復後通過的 case 會標記為 <code>pass_with_healing</code>，保留原始 failure evidence，並產出 HTML 報告供人工審核。</p>
+  </section>
+
+  <section class="card">
+    <h2>二、要解決的問題與設計想法</h2>
+    <p>目前 PHD iOS App 的 UI 自動化測試有一個核心矛盾：測試越完整，維護成本越高；但如果只是讓 AI 把失敗測試修到通過，又可能掩蓋真正的產品問題。因此本系統要解決的不是「讓測試變綠」，而是縮短從失敗到可信判斷的時間。</p>
+    <table>
+      <thead><tr><th>目前問題</th><th>造成影響</th><th>本系統的處理方式</th></tr></thead>
+      <tbody>
+        <tr><td>UI locator、page object、流程小改動容易讓測試失敗</td><td>工程師需要花時間重現、看截圖、找元素、修改測試碼</td><td>AI 分析 failure evidence，對低風險 drift 產生 patch，replay 通過後開 PR</td></tr>
+        <tr><td>server busy / network error 很常發生</td><td>測試報告混入非產品問題，降低 failure 判讀效率</td><td>獨立標註 <code>network_issue</code> / <code>server_busy</code>，依 retry policy 處理，不誤判為一般 failure</td></tr>
+        <tr><td>只有一台 iOS 測試裝置</td><td>若每個 fail 都即時 healing，整體 AT 時間會大幅拉長</td><td>Fail 當下即時收 evidence 與分類，需要操作 App 的 healing 進入 device-aware queue</td></tr>
+        <tr><td>測試之間存在資料或流程依賴</td><td>A 失敗可能導致 B/C/D 都失敗，報告看起來像大量獨立 fail</td><td>建立 dependency analysis，downstream case 標為 <code>blocked_by_upstream</code></td></tr>
+        <tr><td>AI 修復如果缺乏審核，會有品質風險</td><td>可能把產品 bug 或測試意圖改變誤修成 pass</td><td>不自動 merge，所有成功 healing 產出 HTML 報告與 PR，由人工審核後 merge</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      設計想法：將 AI 放在「測試維護層」，而不是「測試判定層」。測試 pass/fail 仍由 test runner 決定；AI 負責分析、建議、修補低風險測試碼，並提供可審核證據。
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card half">
+      <h2>三、導入目標</h2>
+      <ul>
+        <li>降低 iOS UI 自動化測試維護成本，尤其是 locator、page object、等待條件與微小流程 drift。</li>
+        <li>保留測試作為品質訊號的可信度，不讓 AI 把真正產品問題修成表面 pass。</li>
+        <li>建立 failure evidence 與 baseline evidence，供後續 AI 分析與 future test case generation 使用。</li>
+        <li>用 HTML 報告作為主要審核介面，讓 reviewer 能快速判斷 AI 修復是否可信。</li>
+      </ul>
+    </div>
+    <div class="card half">
+      <h2>四、不包含範圍</h2>
+      <ul>
+        <li>不允許 AI 修改 assertion 程式碼、expected value 或驗證邏輯。</li>
+        <li>不允許 AI 自動 merge PR。</li>
+        <li>不將 network/server busy、環境問題、產品缺陷誤列為一般 healing pass。</li>
+        <li>P1 不處理完整自動產生新 test case；此項列為 P2 延伸。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>五、整體架構與流程圖</h2>
+    <p>整體架構分成四層：原始測試執行、失敗證據收集、AI 分析與修復、人工審核與知識沉澱。這樣可以保留原始測試結果，又能讓 AI 在不破壞品質訊號的前提下協助維護測試。</p>
+    <h3>系統架構圖</h3>
+    <pre>CI / Test Runner
+      |
+      v
+Original iOS UI Test Execution
+      |
+      +-- pass -> Compact Baseline Store
+      |
+      +-- fail -> Full Failure Evidence Store
+                    |
+                    v
+        Preliminary Rule-based Classifier
+                    |
+                    v
+             AI Root Cause Analyzer
+                    |
+                    v
+        Device-aware Scheduling Policy
+                    |
+        +-----------+-------------+
+        |                         |
+ Immediate Retry/Recovery   Deferred Healing Queue
+        |                         |
+        v                         v
+ Replay Verifier        Replay Verifier after full AT
+        |                         |
+        +-----------+-------------+
+                    |
+                    v
+            Final Result Reconciler
+                    |
+                    v
+         HTML Report + Healing PR + Knowledge Store</pre>
+    <h3>測試執行與修復流程圖</h3>
+    <pre>Test Case Starts
+      |
+      v
+Capture runtime evidence
+      |
+      +-- Pass
+      |     |
+      |     v
+      |  Save compact baseline for future AI comparison
+      |  Delete non-essential artifacts
+      |
+      +-- Fail
+            |
+            v
+      Save full failure evidence
+            |
+            v
+      Non-AI preliminary reason
+            |
+            v
+      AI root cause analysis
+            |
+            v
+      Is immediate action needed?
+            |
+      +-----+---------------------+
+      |                           |
+     Yes                          No
+      |                           |
+      v                           v
+ Immediate retry/recovery     Wait until full AT run completed
+      |                           |
+      v                           v
+ Replay result               Deferred healing + replay
+      |                           |
+      +-------------+-------------+
+                    |
+                    v
+      Generate HTML report and PR for review</pre>
+    <p>因目前只有一台 iOS 測試裝置，所有需要實際操作 App 的 replay、healing verification、dependency recovery 都必須排程。系統採用 device-aware queue，不把所有 failure 都同步 healing。</p>
+  </section>
+
+  <section class="card">
+    <h2>六、Failure 類型與 AI 處理邊界</h2>
+    <table>
+      <thead><tr><th>Failure 類型</th><th>AI 可做到什麼</th><th>結果標註</th></tr></thead>
+      <tbody>
+        <tr><td>Locator / Page Object Drift</td><td>產生 locator 或 page object patch，replay 通過後自動開 PR</td><td><code>pass_with_healing</code></td></tr>
+        <tr><td>Readiness / Wait Drift</td><td>改成狀態型等待，例如 visible、enabled、spinner gone、API complete</td><td><code>pass_with_healing</code></td></tr>
+        <tr><td>Micro-flow Drift</td><td>新增語意明確的中介步驟，例如 Continue / Open / Next，但不改 assertion</td><td><code>pass_with_healing</code></td></tr>
+        <tr><td>Assertion Failure Symptom</td><td>追 root cause；若原因是 locator、wait、flow、network 等，仍可 healing</td><td>依 root cause 決定</td></tr>
+        <tr><td>Assertion Logic Change Required</td><td>不修改 assertion，分流到 new test case / redesign</td><td><code>needs_new_test_case</code></td></tr>
+        <tr><td>Dependency Cascade</td><td>找出 upstream root failure，downstream case 不算獨立 fail</td><td><code>blocked_by_upstream</code></td></tr>
+        <tr><td>Network / Server Busy</td><td>依 retry policy 重跑與統計，不修改測試碼</td><td><code>network_issue</code> / <code>server_busy</code></td></tr>
+        <tr><td>Product Bug Suspected</td><td>收集證據、標出可能 root cause，不做 healing</td><td><code>product_bug_suspected</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="grid">
+    <div class="card half">
+      <h2>七、執行流程</h2>
+      <ol>
+        <li>每個 case 執行時即時拉取 evidence。</li>
+        <li>Pass case 保留 compact baseline evidence，刪除非必要 artifact。</li>
+        <li>Fail case 保留完整 screenshot、log、accessibility tree、network evidence、trace。</li>
+        <li>先做非 AI 初步 fail reason 分析。</li>
+        <li>再交給 AI 做正式 root cause analysis。</li>
+        <li>判斷是否需要立即 retry / recovery / repair。</li>
+        <li>非緊急 case 等整份 AT 跑完後進入 deferred healing queue。</li>
+        <li>Replay 通過後產出 HTML 報告並自動開 PR。</li>
+      </ol>
+    </div>
+    <div class="card half">
+      <h2>八、Device-aware 排程</h2>
+      <table>
+        <thead><tr><th>類型</th><th>排程</th></tr></thead>
+        <tbody>
+          <tr><td>Network / server busy</td><td>可 immediate retry</td></tr>
+          <tr><td>Setup / dependency root failure</td><td>可 immediate recovery</td></tr>
+          <tr><td>Smoke / blocking case</td><td>可 immediate retry / recovery</td></tr>
+          <tr><td>Locator / page object drift</td><td>deferred healing queue</td></tr>
+          <tr><td>Micro-flow drift</td><td>預設 deferred，若 blocking 才 immediate</td></tr>
+          <tr><td>Product bug suspected</td><td>不進 healing</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>九、HTML Report Review Gate</h2>
+    <p>最後會產出一份 HTML 報告，作為人工審核 AI healing PR 的主要入口。Reviewer 不需要先逐行查 raw log，也能看到 failure 原因、截圖、修復方式、replay 證據與風險標記。</p>
+    <table>
+      <thead><tr><th>報告區塊</th><th>內容</th></tr></thead>
+      <tbody>
+        <tr><td>Run Summary</td><td>branch、commit、environment、device、App version、test run id</td></tr>
+        <tr><td>Failure Detail</td><td>case 名稱、suite、owner、original status、final status</td></tr>
+        <tr><td>Screenshot Evidence</td><td>failure screenshot、healed replay screenshot、before/after 對照</td></tr>
+        <tr><td>Error Reason</td><td>非 AI 初步 reason、AI root cause reason、confidence</td></tr>
+        <tr><td>Action Taken</td><td>immediate retry、deferred healing、data recovery、dependency recovery 等</td></tr>
+        <tr><td>Code Change Summary</td><td>修改檔案、修改類型、diff 摘要</td></tr>
+        <tr><td>Replay Evidence</td><td>replay command、結果、執行時間、裝置與環境</td></tr>
+        <tr><td>Risk Flags</td><td>是否碰到 assertion、是否 major flow、是否 flaky、是否 blocking</td></tr>
+      </tbody>
+    </table>
+    <div class="risk">若報告顯示 assertion logic change、major flow change、product bug suspected 或 manual_review_required，不能只靠報告 approve merge，必須轉人工深入 review。</div>
+  </section>
+
+  <section class="card">
+    <h2>十、分期計畫</h2>
+    <table>
+      <thead><tr><th>階段</th><th>目標</th><th>主要產出</th></tr></thead>
+      <tbody>
+        <tr><td>P0</td><td>Evidence collection 與 failure classification</td><td>Failure event schema、baseline retention、failure taxonomy、初版 HTML report</td></tr>
+        <tr><td>P1</td><td>L3 Auto-healing</td><td>Healing queue、replay verifier、AI patch PR、report review gate</td></tr>
+        <tr><td>P2</td><td>New test case generation</td><td>根據需求、PR diff、coverage gap、App 使用知識產生 test draft</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>十一、主要風險與控管</h2>
+    <table>
+      <thead><tr><th>風險</th><th>控管方式</th></tr></thead>
+      <tbody>
+        <tr><td>AI 把真正 product bug 修成 pass</td><td>禁止修改 assertion；保留 original failure；product bug suspected 不進 healing</td></tr>
+        <tr><td>只有一台 iOS device 導致時間失控</td><td>採 device-aware queue；只有 high-priority failure immediate retry/recovery</td></tr>
+        <tr><td>Flaky 被誤判成修復成功</td><td>區分 <code>pass_after_retry</code> 與 <code>pass_with_healing</code></td></tr>
+        <tr><td>Report 摘要不足，reviewer 看不出風險</td><td>HTML report 必含截圖、root cause、diff 摘要、replay 證據與 risk flags</td></tr>
+        <tr><td>AI 修改範圍過大</td><td>只允許低風險測試路徑 drift；major flow 與 assertion logic change 轉人工</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>十二、下一步建議</h2>
+    <div class="review-item" data-review-id="item-1" data-review-type="plan-item" data-review-label="定義 Failure Event Schema v1">
+      <label class="review-check">
+        <input type="checkbox" class="rv-check" checked>
+        <span><span class="ri-title">1. 定義 Failure Event Schema v1</span><span class="ri-meta">確認 pass baseline、fail evidence、AI analysis、patch evidence 的欄位。</span></span>
+      </label>
+      <textarea class="rv-feedback" placeholder="主管或 reviewer 意見（選填）"></textarea>
+    </div>
+    <div class="review-item" data-review-id="item-2" data-review-type="plan-item" data-review-label="建立 P0 Prototype">
+      <label class="review-check">
+        <input type="checkbox" class="rv-check" checked>
+        <span><span class="ri-title">2. 建立 P0 Prototype</span><span class="ri-meta">先完成 evidence capture、fail classification、HTML report，不急著做 healing。</span></span>
+      </label>
+      <textarea class="rv-feedback" placeholder="主管或 reviewer 意見（選填）"></textarea>
+    </div>
+    <div class="review-item" data-review-id="item-3" data-review-type="plan-item" data-review-label="設計 HTML Report Review Gate">
+      <label class="review-check">
+        <input type="checkbox" class="rv-check" checked>
+        <span><span class="ri-title">3. 設計 HTML Report Review Gate</span><span class="ri-meta">讓 report 成為 AI healing PR 的主要審核入口。</span></span>
+      </label>
+      <textarea class="rv-feedback" placeholder="主管或 reviewer 意見（選填）"></textarea>
+    </div>
+  </section>
+
+  <section class="review-footer">
+    <h2>計畫審閱</h2>
+    <p>若要保存審閱意見，可在上方項目填寫意見後按 DONE，系統會下載一份 JSON。</p>
+    <textarea id="rv-global" class="rv-global" placeholder="整體意見（選填）"></textarea>
+    <br>
+    <button id="rv-done" class="rv-done-btn">DONE - 儲存審閱結果</button>
+    <div id="rv-saved" class="rv-saved"></div>
+  </section>
+</div>
+
+<script>
+  const REVIEW_KIND = "plan-review";
+  const REVIEW_PREFIX = "plan_review";
+  const REVIEW_TASK_ID = "ai-test-auto-healing-plan";
+
+  const pad = n => String(n).padStart(2, "0");
+  function stamp() {
+    const d = new Date();
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
+  function collect() {
+    const items = [];
+    document.querySelectorAll("[data-review-id]").forEach(el => {
+      const cb = el.querySelector(".rv-check");
+      const tx = el.querySelector(".rv-feedback");
+      items.push({
+        id: el.dataset.reviewId,
+        type: el.dataset.reviewType || "item",
+        label: el.dataset.reviewLabel || "",
+        checked: cb ? cb.checked : null,
+        feedback: tx ? tx.value.trim() : ""
+      });
+    });
+    const g = document.getElementById("rv-global");
+    return {
+      kind: REVIEW_KIND,
+      task_id: REVIEW_TASK_ID,
+      saved_at: new Date().toISOString(),
+      architecture: {
+        selected: "Device-aware hybrid AI auto-healing",
+        feedback: ""
+      },
+      items,
+      global_feedback: g ? g.value.trim() : ""
+    };
+  }
+
+  function showSaved(name) {
+    const s = document.getElementById("rv-saved");
+    s.style.display = "block";
+    s.innerHTML = "已儲存：<code>" + name + "</code>";
+  }
+
+  async function saveReview() {
+    const json = JSON.stringify(collect(), null, 2);
+    const filename = REVIEW_PREFIX + "_" + REVIEW_TASK_ID + "_" + stamp() + ".json";
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+        });
+        const w = await handle.createWritable();
+        await w.write(json);
+        await w.close();
+        showSaved(handle.name);
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showSaved(filename);
+  }
+
+  document.getElementById("rv-done").addEventListener("click", saveReview);
+</script>
+</body>
+</html>

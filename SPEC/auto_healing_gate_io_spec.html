@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Auto-Healing Gate I/O 實作規格</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+      background: #f5f7fa;
+      color: #243b53;
+      line-height: 1.65;
+      padding: 32px 16px;
+    }
+    .container { max-width: 1120px; margin: 0 auto; }
+    .hero {
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 12px;
+      padding: 30px 34px;
+      margin-bottom: 18px;
+      box-shadow: 0 12px 32px rgba(15,23,42,.16);
+    }
+    .hero h1 { font-size: 28px; line-height: 1.25; margin-bottom: 8px; }
+    .hero p { color: #cbd5e1; max-width: 850px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .badge {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 4px 12px;
+      background: #e2e8f0;
+      color: #0f172a;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 22px 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 10px rgba(15,23,42,.05);
+    }
+    h2 {
+      font-size: 19px;
+      color: #102a43;
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #e4e7eb;
+    }
+    h3 {
+      font-size: 16px;
+      color: #334e68;
+      margin: 18px 0 10px;
+    }
+    p { margin-bottom: 10px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid #e4e7eb;
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4f8;
+      color: #52606d;
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: #f0f4f8;
+      color: #102a43;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: .92em;
+    }
+    pre {
+      background: #102a43;
+      color: #f0f4f8;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    ul, ol { padding-left: 22px; margin: 8px 0; }
+    li { margin: 4px 0; }
+    .note {
+      background: #eff6ff;
+      border-left: 4px solid #2563eb;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .warning {
+      background: #fffbeb;
+      border-left: 4px solid #d97706;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .success {
+      background: #f0fdf4;
+      border-left: 4px solid #16a34a;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .gate {
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      margin: 16px 0;
+      overflow: hidden;
+      background: #fff;
+    }
+    .gate-head {
+      background: #f8fafc;
+      border-bottom: 1px solid #d9e2ec;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .gate-title { font-weight: 800; color: #102a43; font-size: 16px; }
+    .gate-id {
+      white-space: nowrap;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 800;
+      color: #475569;
+      background: #e2e8f0;
+      border-radius: 999px;
+      padding: 3px 9px;
+    }
+    .gate-body { padding: 16px; }
+    .io-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 12px 0;
+    }
+    .io-box {
+      border: 1px solid #e4e7eb;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfdff;
+    }
+    .io-box strong {
+      display: block;
+      color: #102a43;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      margin: 2px 4px 2px 0;
+      background: #e0f2fe;
+      color: #075985;
+    }
+    .pill.gray { background: #e2e8f0; color: #334155; }
+    .pill.green { background: #dcfce7; color: #166534; }
+    .pill.yellow { background: #fef3c7; color: #92400e; }
+    .pill.red { background: #fee2e2; color: #991b1b; }
+    .small { font-size: 13px; color: #52606d; }
+    @media (max-width: 820px) {
+      .io-grid { grid-template-columns: 1fr; }
+      .hero { padding: 24px; }
+      .card { padding: 18px; }
+      .gate-head { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <section class="hero">
+    <h1>AI Auto-Healing Gate I/O 實作規格</h1>
+    <p>本文件定義 PHD iOS App UI 自動化測試導入 AI Auto-Healing 時，每一個 gate 的輸入、輸出、處理責任與通過條件。此文件用於實際實作拆工與介面對齊，不使用 JSON 描述。</p>
+    <div class="meta">
+      <span class="badge">實作規格</span>
+      <span class="badge">iOS UI Testing</span>
+      <span class="badge">L3 Auto-Healing</span>
+      <span class="badge">不自動 Merge</span>
+      <span class="badge">2026-06-24</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>一、Gate 設計原則</h2>
+    <div class="success">
+      系統的主線不是讓 AI 把測試變綠，而是讓每一次失敗都能被收集、分類、分析、修復、驗證、審核，最後保留成可追溯的品質訊號。
+    </div>
+    <table>
+      <thead><tr><th>原則</th><th>實作含義</th></tr></thead>
+      <tbody>
+        <tr><td>原始結果不可被覆蓋</td><td>原始 test runner 的 pass/fail 永遠保存；AI 修復後只能產生新的 healed result。</td></tr>
+        <tr><td>Assertion 不可被 AI 修改</td><td>AI 可以修造成 assertion failure 的 root cause，但不能改 assertion 程式碼、expected value 或驗證邏輯。</td></tr>
+        <tr><td>需要操作 App 的工作要排程</td><td>目前只有一台 iOS device，replay、healing verification、dependency recovery 都要走 device-aware queue。</td></tr>
+        <tr><td>修復成功不等於一般 pass</td><td>AI 修復後通過要標成 <code>pass_with_healing</code>，不可標成 <code>pass</code>。</td></tr>
+        <tr><td>Review 後才沉澱知識</td><td>Auto-healing event 不能直接進長期 knowledge store；要等人工 review 結果後再萃取。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>二、整體 Gate 流程圖</h2>
+    <pre>Pre-run
+  |
+  v
+G01 Test Identity Gate
+  |
+  v
+Runtime Test Execution
+  |
+  v
+G02 Context Capture Gate
+  |
+  v
+G03 Previous Result Lookup Gate
+  |
+  +-- Pass ---------------------> G04 Pass Baseline Gate
+  |
+  +-- Fail ---------------------> G05 Failure Evidence Gate
+                                      |
+                                      v
+                              G06 Preliminary Classifier Gate
+                                      |
+                                      v
+                              G07 AI Root Cause Gate
+                                      |
+                                      v
+                              G08 Scheduling Decision Gate
+                                      |
+                    +-----------------+----------------+
+                    |                                  |
+                    v                                  v
+          G09 Immediate Action Gate          G10 Deferred Healing Queue Gate
+                    |                                  |
+                    +-----------------+----------------+
+                                      |
+                                      v
+                              G11 Patch Generation Gate
+                                      |
+                                      v
+                              G12 Replay Verification Gate
+                                      |
+                                      v
+                              G13 Final Reconciliation Gate
+                                      |
+                                      v
+                              G14 HTML Report Gate
+                                      |
+                                      v
+                              G15 PR Review Gate
+                                      |
+                                      v
+                              G16 Knowledge Promotion Gate</pre>
+  </section>
+
+  <section class="card">
+    <h2>三、Gate I/O 總覽</h2>
+    <div class="note">
+      Test Identity 的詳細欄位、命名規則與不應放入 Identity 的資料，請以 <a href="test_identity_spec.md">test_identity_spec.md</a> 為準。
+      Previous Result History 的保存筆數、欄位與查詢規則，請以 <a href="previous_result_history_spec.md">previous_result_history_spec.md</a> 為準。
+      Pass Baseline 的 step-level 保存範圍與補抓規則，請以 <a href="pass_baseline_retention_spec.md">pass_baseline_retention_spec.md</a> 為準。
+      Failure Evidence 的必收與條件收資料，請以 <a href="failure_evidence_collection_spec.md">failure_evidence_collection_spec.md</a> 為準。
+      Failure Taxonomy 的分類優先順序，請以 <a href="failure_taxonomy_priority_spec.md">failure_taxonomy_priority_spec.md</a> 為準。
+      Immediate vs Deferred 的 device 排程規則，請以 <a href="immediate_vs_deferred_policy_spec.md">immediate_vs_deferred_policy_spec.md</a> 為準。
+      Retry 的次數、標註與 retry fail 後續流程，請以 <a href="retry_policy_spec.md">retry_policy_spec.md</a> 為準。
+      L3 Healing 的資格、blocking impact 與 healing risk 判斷，請以 <a href="l3_healing_eligibility_spec.md">l3_healing_eligibility_spec.md</a> 為準。
+      Replay Verification 的 replay 次數、scope、shared locator fallback 與通過條件，請以 <a href="replay_verification_spec.md">replay_verification_spec.md</a> 為準。
+      HTML Report 作為 merge gate 的嚴格 approval checklist 與 decision 規則，請以 <a href="html_report_approval_rule_spec.md">html_report_approval_rule_spec.md</a> 為準。
+      PR Generation 的 run-level PR 粒度、included / excluded case 規則與 merge allowed 條件，請以 <a href="pr_generation_rule_spec.md">pr_generation_rule_spec.md</a> 為準。
+      Knowledge Promotion 的可提升條件、knowledge 類型與 confidence 規則，請以 <a href="knowledge_promotion_spec.md">knowledge_promotion_spec.md</a> 為準。
+      New Case Generator 可讀取哪些 knowledge、不可讀取哪些未審核 event，請以 <a href="new_case_generator_boundary_spec.md">new_case_generator_boundary_spec.md</a> 為準。
+      Metrics 的 run-level / trend-level 指標、status counting rule 與品質 guardrail，請以 <a href="metrics_spec.md">metrics_spec.md</a> 為準。
+    </div>
+    <table>
+      <thead><tr><th>Gate</th><th>主要輸入</th><th>主要輸出</th><th>下一站</th></tr></thead>
+      <tbody>
+        <tr><td>G01 Test Identity</td><td>測試清單、case metadata、feature 對應</td><td>可追蹤的 test identity</td><td>G02</td></tr>
+        <tr><td>G02 Context Capture</td><td>test identity、執行環境、裝置狀態</td><td>runtime context</td><td>G03</td></tr>
+        <tr><td>G03 Previous Result Lookup</td><td>test identity、branch / target baseline、歷史執行紀錄</td><td>上一輪 case 狀態與歷史趨勢摘要</td><td>Pass: G04 / Fail: G05</td></tr>
+        <tr><td>G04 Pass Baseline</td><td>pass result、runtime context、上一輪狀態、畫面摘要</td><td>compact baseline evidence</td><td>結束</td></tr>
+        <tr><td>G05 Failure Evidence</td><td>fail result、錯誤、截圖、log、accessibility tree、上一輪狀態</td><td>full failure evidence package</td><td>G06</td></tr>
+        <tr><td>G06 Preliminary Classifier</td><td>failure evidence、錯誤類型、runner 訊息、上一輪狀態</td><td>非 AI 初步分類</td><td>G07</td></tr>
+        <tr><td>G07 AI Root Cause</td><td>failure evidence、初步分類、歷史 baseline、上一輪狀態</td><td>root cause、failure type、建議 action</td><td>G08</td></tr>
+        <tr><td>G08 Scheduling Decision</td><td>root cause、priority、device budget、failure type、上一輪狀態</td><td>immediate 或 deferred 決策</td><td>G09 或 G10</td></tr>
+        <tr><td>G09 Immediate Action</td><td>高優先 failure、device、retry/recovery policy</td><td>retry/recovery result</td><td>G12 或 G13</td></tr>
+        <tr><td>G10 Deferred Queue</td><td>非緊急 healing candidate、full run result</td><td>排程後的 healing task</td><td>G11</td></tr>
+        <tr><td>G11 Patch Generation</td><td>root cause、evidence、可修改範圍</td><td>patch、diff summary、risk flags</td><td>G12</td></tr>
+        <tr><td>G12 Replay Verification</td><td>patch、原始 case、device、replay policy、shared locator impact</td><td>replay attempts、replay result、final status candidate</td><td>G13</td></tr>
+        <tr><td>G13 Final Reconciliation</td><td>original result、AI result、dependency graph、replay result、上一輪狀態</td><td>final status、root cause grouping、狀態變化說明</td><td>G14</td></tr>
+        <tr><td>G14 HTML Report</td><td>所有 evidence、分析、修復、replay、final status、上一輪狀態、approval checklist、metrics summary</td><td>可審核 HTML report、merge gate readiness、run-level metrics</td><td>G15</td></tr>
+        <tr><td>G15 PR Review</td><td>run-level PR、HTML report、included / excluded cases、diff summary、risk flags、approval decision</td><td>approve_merge_allowed、reject_healing、need_more_evidence、manual_code_review_required</td><td>G16 或結束</td></tr>
+        <tr><td>G16 Knowledge Promotion</td><td>approve_merge_allowed event、review decision、healing history、source evidence</td><td>candidate / trusted / deprecated knowledge、event history update</td><td>Knowledge Store</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>四、各 Gate 詳細規格</h2>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Test Identity Gate</div><div class="gate-id">G01</div></div>
+      <div class="gate-body">
+        <p>在測試開始前，先準備每個 test case 的身份資料。這是後續分類、報告、PR、knowledge promotion 的索引基礎。詳細欄位定義請參考 <a href="test_identity_spec.md">test_identity_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>測試清單與 case 名稱</li>
+              <li>測試檔案路徑與 function / method 名稱</li>
+              <li>對應 feature、user flow、priority、owner</li>
+              <li>是否屬於 smoke、blocking、non-blocking case</li>
+              <li>已知 upstream / downstream dependency</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>唯一 test identity</li>
+              <li>feature 與 user flow 對應關係</li>
+              <li>priority 與 blocking 屬性</li>
+              <li>dependency relationship 初始資料</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>每個 case 都能對應到穩定 identity；至少包含 case 名稱、feature、priority。</td></tr>
+            <tr><th>失敗去向</th><td>缺 metadata 的 case 仍可執行，但標為 <code>identity_incomplete</code>，後續報告提示補齊。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Context Capture Gate</div><div class="gate-id">G02</div></div>
+      <div class="gate-body">
+        <p>每個 case 執行時即時收集環境與裝置上下文。這些資料用來判斷失敗是否與 App version、device、iOS version 或環境有關。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>test identity</li>
+              <li>branch、commit、build number、App version</li>
+              <li>iOS version、device model、device id</li>
+              <li>測試環境、登入帳號或 fixture profile</li>
+              <li>case 開始時間與 runner 狀態</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>runtime context</li>
+              <li>case execution session id</li>
+              <li>當下 device / App 狀態摘要</li>
+              <li>後續 evidence 的關聯索引</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>每次 case execution 都能留下可追溯的 context。</td></tr>
+            <tr><th>失敗去向</th><td>若 context capture 不完整，仍繼續跑測試，但在 report 標出 evidence gap。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Previous Result Lookup Gate</div><div class="gate-id">G03</div></div>
+      <div class="gate-body">
+        <p>在本次 case 結果進入 pass/fail 分流前，自動查詢上一輪同一 case 的狀態。這是 flaky 判斷、regression 判斷、healing 優先級與 HTML report 趨勢說明的重要輸入。詳細規則請參考 <a href="previous_result_history_spec.md">previous_result_history_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>test identity</li>
+              <li>目前 branch、commit、build number</li>
+              <li>目標比較基準，例如上一輪同 branch、上一個 main/nightly run、上一個 release baseline</li>
+              <li>歷史 test result store</li>
+              <li>歷史 HTML report 或 CI run record</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>上一輪 case 狀態，例如 pass、fail、pass_with_healing、flaky_suspect</li>
+              <li>上一輪 failure type 與 final status</li>
+              <li>上一輪是否有 healing PR 與 reviewer decision</li>
+              <li>最近 N 次狀態摘要</li>
+              <li>是否從 pass 轉 fail、fail 轉 pass、持續 fail、反覆不穩定</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>自動取得方式</th><td>優先從本系統的 Result Store 查詢；若尚未建立，先從 CI artifact、歷史 HTML report、test management export 或 GitHub Actions/Jenkins run metadata 匯入。查詢 key 應以 stable test identity 為主，不只靠 case name。</td></tr>
+            <tr><th>通過條件</th><td>能找到上一輪狀態，或明確標記為 no_previous_result。</td></tr>
+            <tr><th>失敗去向</th><td>查不到歷史資料時不阻塞測試，輸出 no_previous_result，並在 report 標示 history unavailable。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Pass Baseline Gate</div><div class="gate-id">G04</div></div>
+      <div class="gate-body">
+        <p>Pass case 不保存完整重型 artifact，只保留未來 AI 比對正常狀態所需的 step-level baseline。詳細保存範圍與補抓規則請參考 <a href="pass_baseline_retention_spec.md">pass_baseline_retention_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>原始 pass result</li>
+              <li>runtime context</li>
+              <li>上一輪 case 狀態</li>
+              <li>關鍵 screen state</li>
+              <li>必要 screenshot 或 screenshot hash</li>
+              <li>accessibility tree 摘要</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>compact baseline evidence</li>
+              <li>pass status</li>
+              <li>可供未來失敗比對的正常 UI 狀態</li>
+              <li>非必要 artifact 刪除紀錄</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>保留足以做未來比對的最小正常狀態，不保存過量 video / trace。</td></tr>
+            <tr><th>失敗去向</th><td>若 baseline 保存失敗，不影響 case pass，但記錄為 baseline collection warning。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Failure Evidence Gate</div><div class="gate-id">G05</div></div>
+      <div class="gate-body">
+        <p>Fail case 必須保留足夠 evidence。這是 AI 分析 root cause 與 HTML report 的核心素材。必收與條件收資料請參考 <a href="failure_evidence_collection_spec.md">failure_evidence_collection_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>原始 fail result</li>
+              <li>上一輪 case 狀態</li>
+              <li>error message、stack trace、assertion message</li>
+              <li>failure screenshot、必要時 video / trace</li>
+              <li>accessibility tree、visible element list</li>
+              <li>network request / response evidence</li>
+              <li>當下 screen name、App state、fixture state</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>full failure evidence package</li>
+              <li>original failure snapshot</li>
+              <li>error signature</li>
+              <li>AI analysis 的輸入資料</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>至少有 error、screenshot、accessibility tree 或可替代的 UI state evidence。</td></tr>
+            <tr><th>失敗去向</th><td>若 evidence 不足，進入 <code>manual_review_required</code>，不允許 L3 auto-healing。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Preliminary Classifier Gate</div><div class="gate-id">G06</div></div>
+      <div class="gate-body">
+        <p>先用非 AI 規則做初步分類，減少 AI 誤判，也讓 network/server busy、device crash 等高頻類型快速分流。分類優先順序請參考 <a href="failure_taxonomy_priority_spec.md">failure_taxonomy_priority_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>full failure evidence package</li>
+              <li>上一輪 case 狀態與最近 N 次狀態摘要</li>
+              <li>runner error code</li>
+              <li>timeout、network status、HTTP status</li>
+              <li>device / App crash signal</li>
+              <li>assertion symptom 與 error signature</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>初步 failure category</li>
+              <li>是否疑似 network/server busy</li>
+              <li>是否疑似 infra / device issue</li>
+              <li>是否需要 AI deeper analysis</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>產生至少一個初步分類，並指出分類信心與需要 AI 判斷的部分。</td></tr>
+            <tr><th>失敗去向</th><td>分類不足時仍交給 AI，但在 report 標示 preliminary classifier inconclusive。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">AI Root Cause Gate</div><div class="gate-id">G07</div></div>
+      <div class="gate-body">
+        <p>AI 根據 failure evidence、初步分類、歷史 baseline 與 App 使用知識，分析真正 root cause。Assertion failure 在此只視為症狀，不直接視為 root cause。分類優先順序請參考 <a href="failure_taxonomy_priority_spec.md">failure_taxonomy_priority_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>failure evidence package</li>
+              <li>preliminary category</li>
+              <li>上一輪 case 狀態與歷史趨勢</li>
+              <li>pass baseline 對照資料</li>
+              <li>App usage knowledge</li>
+              <li>test fragility knowledge</li>
+              <li>歷史相似 failure / healing records</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>root cause reason</li>
+              <li>failure type</li>
+              <li>confidence</li>
+              <li>suggested action</li>
+              <li>是否可進 L3 healing</li>
+              <li>risk flags</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>AI 能說明失敗原因、對應 failure taxonomy，並提出 action 或 no-healing 理由。</td></tr>
+            <tr><th>失敗去向</th><td>低信心、缺 evidence、疑似產品問題或需要改 assertion 時，輸出 <code>manual_review_required</code> 或 <code>needs_new_test_case</code>。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Scheduling Decision Gate</div><div class="gate-id">G08</div></div>
+      <div class="gate-body">
+        <p>決定這次 failure 是否需要立即處理，或等 full AT run 結束後再進 deferred healing queue。device 排程與 lane 規則請參考 <a href="immediate_vs_deferred_policy_spec.md">immediate_vs_deferred_policy_spec.md</a>，L3 與 immediate healing eligibility 請參考 <a href="l3_healing_eligibility_spec.md">l3_healing_eligibility_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>root cause analysis</li>
+              <li>上一輪 case 狀態與是否 regression</li>
+              <li>case priority 與 blocking 屬性</li>
+              <li>device availability</li>
+              <li>retry / recovery budget</li>
+              <li>目前 AT run 進度</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>immediate action</li>
+              <li>deferred healing</li>
+              <li>no healing</li>
+              <li>manual review</li>
+              <li>排程理由</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>每個 fail case 都有明確 lane：immediate、deferred、manual、no-healing。</td></tr>
+            <tr><th>失敗去向</th><td>若排程無法決定，預設不搶 device，進 deferred 或 manual review。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Immediate Action Gate</div><div class="gate-id">G09</div></div>
+      <div class="gate-body">
+        <p>只處理高優先 failure，例如 app crash rerun、network/server busy immediate retry、generation fail retry、setup / dependency root failure recovery、smoke / blocking case。v1 所有 immediate rerun 最多一次，device 排程請參考 <a href="immediate_vs_deferred_policy_spec.md">immediate_vs_deferred_policy_spec.md</a>，retry 標註與後續流程請參考 <a href="retry_policy_spec.md">retry_policy_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>immediate action decision</li>
+              <li>可用 device</li>
+              <li>retry / recovery policy</li>
+              <li>原始 failure evidence</li>
+              <li>case identity 與 dependency info</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>retry result</li>
+              <li>recovery result</li>
+              <li>pass_after_retry 或 pass_after_recovery 類狀態</li>
+              <li>仍失敗時的 updated evidence</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>在 budget 內完成 retry / recovery，且不污染原始 failure record。</td></tr>
+            <tr><th>失敗去向</th><td>超過 budget 或仍失敗，進 Final Reconciliation，不再無限制重跑。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Deferred Healing Queue Gate</div><div class="gate-id">G10</div></div>
+      <div class="gate-body">
+        <p>非緊急但可 healing 的 failure 先排隊，等 full AT run 完成後再依優先級使用 device 進行修復與 replay。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>healing candidate list</li>
+              <li>full AT run result</li>
+              <li>root cause grouping</li>
+              <li>dependency cascade result</li>
+              <li>device queue policy</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>排序後的 healing tasks</li>
+              <li>每個 task 的 priority</li>
+              <li>被略過的 no-healing tasks</li>
+              <li>queue execution plan</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>queue 只包含符合 L3 或 L2 review 條件的 healing candidate。</td></tr>
+            <tr><th>失敗去向</th><td>若 candidate 被 root cause grouping 判定為 downstream blocked，改標 <code>blocked_by_upstream</code>，不進 healing。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Patch Generation Gate</div><div class="gate-id">G11</div></div>
+      <div class="gate-body">
+        <p>AI 產生測試碼修補，但只能在允許範圍內修改 locator、page object、狀態型等待或 micro-flow step。可進 L3 的修補範圍請參考 <a href="l3_healing_eligibility_spec.md">l3_healing_eligibility_spec.md</a>。若 locator 位於 shared page object，必須依 <a href="replay_verification_spec.md">replay_verification_spec.md</a> 的 Shared Locator Impact Gate 決定是否 global update 或改用 locator override parameter。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>root cause reason</li>
+              <li>full failure evidence</li>
+              <li>相關測試檔與 page object</li>
+              <li>允許修改範圍</li>
+              <li>禁止修改規則，例如 assertion 不可改</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>candidate patch</li>
+              <li>changed files list</li>
+              <li>diff summary</li>
+              <li>healing action description</li>
+              <li>risk flags</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>patch 不改 assertion，不改 expected value，不繞過失敗，且修改範圍局部。</td></tr>
+            <tr><th>失敗去向</th><td>若需要大改流程或 assertion，停止 patch，標 <code>needs_new_test_case</code> 或 <code>manual_review_required</code>。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Replay Verification Gate</div><div class="gate-id">G12</div></div>
+      <div class="gate-body">
+        <p>修復是否有效只能由 replay 驗證，不接受 AI 自稱修好。Replay 最多允許 3 個 patch attempts；同一份 patch 不重複碰運氣。Replay scope、shared locator fallback 與通過條件請以 <a href="replay_verification_spec.md">replay_verification_spec.md</a> 為準。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>candidate patch</li>
+              <li>原始 fail case</li>
+              <li>replay command</li>
+              <li>device 與環境設定</li>
+              <li>replay budget 與重跑次數限制</li>
+              <li>shared locator impact 判斷</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>replay pass / fail</li>
+              <li>replay screenshot</li>
+              <li>replay log</li>
+              <li>replay attempt count</li>
+              <li>final status candidate</li>
+              <li>healing succeeded / failed</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>套用 patch 後 replay 通過、原 fail step 通過、final assertion 通過、沒有新增高風險 signal；若使用 locator override parameter，default path 不可被破壞。</td></tr>
+            <tr><th>失敗去向</th><td>Replay 不通過時，若仍屬低風險且 root cause 明確，可產生下一版 patch 後再 replay，總計最多 3 attempts；超過上限或需改 assertion / expected value 時，停止 L3 healing。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Final Reconciliation Gate</div><div class="gate-id">G13</div></div>
+      <div class="gate-body">
+        <p>將原始測試結果、AI 分析、replay、dependency graph 合併成最終報告狀態。這一層負責保護品質訊號。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>original test result</li>
+              <li>上一輪 case 狀態與最近 N 次趨勢</li>
+              <li>failure taxonomy result</li>
+              <li>dependency graph</li>
+              <li>retry / recovery result</li>
+              <li>healing replay result</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>final status</li>
+              <li>狀態變化說明，例如 new failure、recovered、repeated failure、flaky trend</li>
+              <li>root failure group</li>
+              <li>blocked_by_upstream mapping</li>
+              <li>report-ready summary</li>
+              <li>PR eligibility</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>每個 case 只有一個 final status，但保留 original status 與 healing/recovery status。</td></tr>
+            <tr><th>失敗去向</th><td>無法 reconcile 時標 <code>manual_review_required</code>，不可自動 merge。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">HTML Report Gate</div><div class="gate-id">G14</div></div>
+      <div class="gate-body">
+        <p>產出 reviewer 主要審核介面。報告必須讓 reviewer 看見失敗截圖、原因、AI 修了什麼、replay 是否通過，以及是否有風險。L3 healing 的 HTML report 採嚴格 approval rule；只有符合 <a href="html_report_approval_rule_spec.md">html_report_approval_rule_spec.md</a> 的 report 才能作為 merge gate。Run-level 與 trend-level metrics 請參考 <a href="metrics_spec.md">metrics_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>run summary</li>
+              <li>上一輪 case 狀態與狀態變化說明</li>
+              <li>failure detail</li>
+              <li>failure screenshot 與 replay screenshot</li>
+              <li>root cause reason</li>
+              <li>patch diff summary</li>
+              <li>replay evidence</li>
+              <li>risk flags</li>
+              <li>PR link</li>
+              <li>approval checklist</li>
+              <li>metrics summary</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>HTML review report</li>
+              <li>reviewer decision area</li>
+              <li>case-level status table</li>
+              <li>PR merge readiness summary</li>
+              <li>approval decision candidate</li>
+              <li>run-level metrics summary</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>嚴格 checklist 全部通過，且 reviewer 可在不先看 raw log 的情況下判斷 AI healing 可信、patch 合法、replay 有效；report 必須獨立統計 <code>pass_with_healing</code>、retry、infra / service issue 與品質 guardrail。</td></tr>
+            <tr><th>失敗去向</th><td>缺截圖、缺 diff summary、缺 replay evidence、root cause 不明、patch 超出 L3 邊界或 PR diff 不一致時，報告不可作為 merge gate。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">PR Review Gate</div><div class="gate-id">G15</div></div>
+      <div class="gate-body">
+        <p>AI healing 成功後可自動開 run-level PR，但 merge 必須由人工根據 HTML report 審核。每輪 AT run 最多一個 Auto-Healing PR；PR 只包含 eligible healing patches，不合格 case 只出現在 report 中。PR generation 詳細規則請參考 <a href="pr_generation_rule_spec.md">pr_generation_rule_spec.md</a>。只有 HTML report decision 為 <code>approve_merge_allowed</code> 時，PR 才能進入 merge allowed 狀態。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li>run-level HTML report</li>
+              <li>run-level AI healing PR</li>
+              <li>included healing cases</li>
+              <li>excluded cases 與排除原因</li>
+              <li>changed files</li>
+              <li>diff summary</li>
+              <li>risk flags</li>
+              <li>replay result</li>
+              <li>approval checklist result</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>approve_merge_allowed</li>
+              <li>reject_healing</li>
+              <li>need_more_evidence</li>
+              <li>manual_code_review_required</li>
+              <li>review comments</li>
+              <li>merge allowed / not allowed</li>
+              <li>PR merge gate status</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>只有 <code>approve_merge_allowed</code> 才允許 merge；approve 代表接受 run-level PR 內所有 included <code>pass_with_healing</code> patch 的證據，不代表原始測試一般 pass。</td></tr>
+            <tr><th>失敗去向</th><td><code>reject_healing</code>、<code>need_more_evidence</code>、<code>manual_code_review_required</code> 都不可 merge；不合格 case 不可放進 PR，但必須留在 HTML report 中說明。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gate">
+      <div class="gate-head"><div class="gate-title">Knowledge Promotion Gate</div><div class="gate-id">G16</div></div>
+      <div class="gate-body">
+        <p>只有通過 review 的事件，才可萃取成長期知識。Knowledge 分為三類：App Usage Knowledge、Test Fragility Knowledge、Coverage Opportunity Knowledge。Promotion eligibility、confidence 與不可 promotion 的內容請參考 <a href="knowledge_promotion_spec.md">knowledge_promotion_spec.md</a>；若 knowledge 要提供給 New Case Generator，讀取邊界請參考 <a href="new_case_generator_boundary_spec.md">new_case_generator_boundary_spec.md</a>。</p>
+        <div class="io-grid">
+          <div class="io-box">
+            <strong>Input</strong>
+            <ul>
+              <li><code>approve_merge_allowed</code> auto-healing event</li>
+              <li>root cause analysis</li>
+              <li>healing action</li>
+              <li>replay result</li>
+              <li>reviewer decision 與 comments</li>
+              <li>是否反覆出現的 failure pattern</li>
+              <li>source evidence summary</li>
+            </ul>
+          </div>
+          <div class="io-box">
+            <strong>Output</strong>
+            <ul>
+              <li>App Usage Knowledge</li>
+              <li>Test Fragility Knowledge</li>
+              <li>Coverage Opportunity Knowledge</li>
+              <li>source event reference</li>
+              <li>confidence：candidate / trusted / deprecated</li>
+              <li>不可 promotion 的 event history record</li>
+            </ul>
+          </div>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>通過條件</th><td>只有 <code>approve_merge_allowed</code> 且 source evidence 完整的 event 才能 promotion；單次 approved event 先進 <code>candidate</code>，重複 approved 或 reviewer 明確確認後才能成為 <code>trusted</code>。</td></tr>
+            <tr><th>失敗去向</th><td><code>reject_healing</code>、<code>need_more_evidence</code>、<code>manual_code_review_required</code>、單次 flaky、network/server busy、generation fail 只能保留在 event history 或 metrics / trend，不可提升為 auto-healing knowledge。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>五、狀態輸出規則</h2>
+    <table>
+      <thead><tr><th>Final Status</th><th>產生條件</th><th>可否作為一般 Pass</th></tr></thead>
+      <tbody>
+        <tr><td><code>pass</code></td><td>原始測試直接通過，未經 retry、healing、recovery。</td><td>可以</td></tr>
+        <tr><td><code>pass_with_healing</code></td><td>AI 修改測試路徑、locator、page object 或 micro-flow 後，replay 通過。</td><td>不可以，需 report review</td></tr>
+        <tr><td><code>pass_after_retry</code></td><td>不改 code 重跑後通過。</td><td>不可以，代表疑似 flaky</td></tr>
+        <tr><td><code>pass_after_network_retry</code></td><td>network/server busy 依 retry policy 重跑後通過。</td><td>不可以，需獨立統計</td></tr>
+        <tr><td><code>blocked_by_upstream</code></td><td>此 case 因 upstream failure 無法成立。</td><td>不可以，不算獨立 fail</td></tr>
+        <tr><td><code>needs_new_test_case</code></td><td>需要修改測試意圖、assertion 邏輯或主流程 redesign。</td><td>不可以</td></tr>
+        <tr><td><code>product_bug_suspected</code></td><td>失敗可能代表產品缺陷。</td><td>不可以</td></tr>
+        <tr><td><code>manual_review_required</code></td><td>AI 無法安全判斷或證據不足。</td><td>不可以</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>六、實作拆工建議</h2>
+    <table>
+      <thead><tr><th>階段</th><th>先做的 Gate</th><th>完成標準</th></tr></thead>
+      <tbody>
+        <tr><td>P0-1</td><td>G01 到 G06</td><td>能收集 pass baseline、fail evidence、上一輪 case 狀態，並做非 AI 初步分類。</td></tr>
+        <tr><td>P0-2</td><td>G07、G08、G13、G14</td><td>AI 可分析 root cause，產出含歷史狀態對照的 HTML report，但先不修 code。</td></tr>
+        <tr><td>P1-1</td><td>G10 到 G12</td><td>支援 deferred healing queue、patch generation、replay verification。</td></tr>
+        <tr><td>P1-2</td><td>G15</td><td>AI healing PR 與 HTML report review gate 串起來，不自動 merge。</td></tr>
+        <tr><td>P2</td><td>G16</td><td>從 approved event 萃取三類 knowledge，供 future new case generator 使用。</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+</body>
+</html>
