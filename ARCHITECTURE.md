@@ -15,45 +15,52 @@
 │                    （pytest session, ~14 hrs, 200 cases）            │
 │                                                                     │
 │  conftest.py                                                        │
-│  ┌──────────┐    ┌──────────────┐    ┌───────────────┐              │
-│  │ 執行測試  │───▶│ 失敗？收 evidence│───▶│ claude CLI     │              │
-│  │ (pytest)  │    │ (metadata.json│    │ Phase1 triage │              │
-│  └──────────┘    │  screenshot   │    │ Lane A/B/C/D  │              │
-│       │          │  hierarchy)   │    └───────┬───────┘              │
-│       │          └──────────────┘            │                      │
-│       │                                 ┌───▼────┐                  │
-│       │                                 │ retry? │                  │
-│       │                                 └───┬────┘                  │
-│       │                            Yes ─────┴───── No               │
-│       │                            │               │                │
-│       │                    ┌───────▼──────┐  ┌─────▼─────┐          │
-│       │                    │ retry 1 次    │  │ deferred  │          │
-│       │                    │ (protocol 內) │  │ to Phase 2│          │
-│       │                    └───────┬──────┘  └───────────┘          │
-│       │                            │                                │
-│       ▼                            ▼                                │
-│  ┌─────────────────────────────────────┐                            │
-│  │       state.json（每 case 更新）      │                            │
-│  └─────────────────────────────────────┘                            │
+│  ┌──────────┐    ┌──────────────┐    ┌────────────────┐             │
+│  │ 執行測試  │───▶│ 失敗？收 evidence│───▶│ Python heuristic│             │
+│  │ (pytest)  │    │ (metadata.json│    │ 即時分類（無 AI）  │             │
+│  └──────────┘    │  screenshot   │    └───────┬────────┘             │
+│       │          │  hierarchy)   │            │                      │
+│       │          └──────────────┘        ┌───▼────┐                  │
+│       │                                  │ retry? │                  │
+│       │                                  └───┬────┘                  │
+│       │                             Yes ─────┴───── No               │
+│       │                             │               │                │
+│       │                     ┌───────▼──────┐  ┌─────▼─────┐          │
+│       │                     │ retry 1 次    │  │ deferred  │          │
+│       │                     │ (protocol 內) │  │ to Phase 2│          │
+│       │                     └───────┬──────┘  └───────────┘          │
+│       │                             │                                │
+│       ▼                             ▼                                │
+│  ┌─────────────────────────────────────┐                             │
+│  │       state.json（每 case 更新）      │                             │
+│  └─────────────────────────────────────┘                             │
+│       │                                                              │
+│       ▼  pytest_sessionfinish                                        │
+│  ┌─────────────────────────────────────┐                             │
+│  │ 有 deferred? → Popen orchestrator.py│                             │
+│  └─────────────────────────────────────┘                             │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Phase 2: After AT Run                          │
-│                   （Claude Code Workflow）                           │
+│                   （Python orchestrator + claude -p）                │
 │                                                                     │
-│  auto_healing.js                                                    │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐      │
-│  │ Root     │    │ Patch    │    │ Replay   │    │ Report   │      │
-│  │ Cause    │───▶│ Generate │───▶│ Verify   │───▶│ & PR     │──┐   │
-│  │ Analysis │    │          │    │ (device) │    │          │  │   │
-│  │(parallel)│    │(per case)│    │(sequential)   │          │  │   │
-│  └──────────┘    └──────────┘    └──────────┘    └──────────┘  │   │
-│                                                                │   │
-│                                                    ┌───────────▼┐  │
-│                                                    │ Knowledge  │  │
-│                                                    │ Promotion  │  │
-│                                                    └────────────┘  │
+│  orchestrator.py                                                    │
+│  ┌───────────────┐    ┌───────────┐    ┌───────────────┐            │
+│  │ Analyze &     │    │ Replay    │    │ Finalize      │            │
+│  │ Patch         │───▶│ (pytest)  │───▶│ (Python)      │            │
+│  │ (claude -p)   │    │ 直接執行   │    │ state + report│            │
+│  │ 【parallel】   │    │【sequential】  │ 無 AI          │            │
+│  └───────────────┘    └─────┬─────┘    └───────────────┘            │
+│                             │                                       │
+│                        fail?│                                       │
+│                             ▼                                       │
+│                       ┌───────────┐                                 │
+│                       │ Re-analyze│                                 │
+│                       │ (claude -p)──── 新 patch → 回到 Replay       │
+│                       │ max 10 次  │                                 │
+│                       └───────────┘                                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,38 +71,37 @@
 ```
 /Users/rdqe/Desktop/iOS_auto_healing_skills/       ← 本 Repo（Auto-Healing）
 ├── ARCHITECTURE.md              # 本文件
-├── SPEC/                        # 14 份規格文件（gate I/O、taxonomy、policy…）
-├── auto_healing_skills/         # 6 個 sub-agent skill + reference skills
-│   ├── auto-healing-root-cause/       SKILL.md  ← G07 Sub-agent
-│   ├── auto-healing-patch-generation/ SKILL.md  ← G11 Sub-agent
-│   ├── auto-healing-replay-verification/ SKILL.md ← G12 Sub-agent
-│   ├── auto-healing-html-report-approval/ SKILL.md ← G14 Sub-agent
-│   ├── auto-healing-knowledge-promotion/ SKILL.md ← G16 Sub-agent
-│   ├── auto-healing-phase1-decision/  SKILL.md  ← Phase 1 claude CLI
-│   └── (其他 reference skills，保留作為規則文件)
+├── SPEC/                        # 14 份規格文件
+├── .claude/agents/
+│   └── analyze-and-patch.md     # 合併的 root-cause + patch agent type (opus 4.6)
+├── auto_healing_skills/         # Sub-agent skills（保留作為規則參考）
+│   ├── auto-healing-root-cause/       SKILL.md
+│   ├── auto-healing-patch-generation/ SKILL.md
+│   └── (其他 reference skills)
+├── tools/                       # Python 工具（無 AI）
+│   ├── orchestrator.py          # Phase 2 主控（parallel claude -p + sequential replay）
+│   ├── replay.py                # 跑 pytest，解析結果，回傳 JSON
+│   ├── update_state.py          # 更新 state.json
+│   └── generate_report.py       # 從 state.json 產生 HTML report（固定模板）
 ├── workflow/
-│   └── auto_healing.js          # Phase 2 Workflow 編排腳本
-├── runs/                        # 每次 AT run 的輸出（自動生成）
+│   └── auto_healing.js          # Backup：僅 parallel analyze-and-patch（用 Workflow tool）
+├── runs/                        # 每次 AT run 的輸出
 │   └── {run_id}/
 │       ├── state.json
-│       ├── analysis/{case_id}/root_cause.json
-│       ├── patches/{case_id}/
-│       ├── replay/{case_id}/
-│       └── report.html
-├── registry/                    # 跨 run 持久
-│   ├── test_registry.json       # Stable Case ID 對照表
-│   └── history.json             # Previous result history
-└── knowledge/                   # 跨 run 持久
-    ├── app_usage/
-    ├── test_fragility/
-    └── coverage_opportunity/
+│       ├── analysis/{case_id}/result.json
+│       ├── healing_results.json
+│       ├── report.html
+│       └── phase2.log
+├── registry/
+│   └── test_registry.json       # Stable Case ID 對照表
+└── knowledge/                   # 跨 run 持久（未來）
 
 /Users/rdqe/Desktop/rdqe-ios-autotest-phdm/        ← 測試 Repo
-├── SFT/conftest.py              # Phase 1 邏輯（已修改）
+├── SFT/conftest.py              # Phase 1 邏輯
 ├── SFT/tests/                   # 測試碼（patch 修改對象）
 ├── pages/                       # Page Object（patch 修改對象）
 ├── locator/                     # Locator 定義（patch 修改對象）
-└── Self-healing/evidence/       # Evidence 資料夾（已有）
+└── Self-healing/evidence/       # Evidence 資料夾
     └── {timestamp}-{test_name}/
         ├── metadata.json
         ├── fail_moment.png
@@ -108,7 +114,7 @@
 
 ## Phase 1 流程（conftest.py）
 
-### pytest_runtest_protocol（retry hook）
+### pytest_runtest_protocol
 
 ```
 pytest 執行 test case
@@ -117,24 +123,27 @@ pytest 執行 test case
   │
   └─ FAIL
       ├─ 收集 evidence（metadata.json + screenshot + hierarchy）
-      ├─ 呼叫 claude CLI（auto-healing-phase1-decision skill）
-      │   └─ 回傳 { lane, action, preliminary_category, reason }
+      ├─ _classify_failure_heuristic()（純 Python，不呼叫 AI）
+      │   ├─ app_state 異常（crash/黑屏）→ action: retry
+      │   ├─ stack trace 含 network 關鍵字 → action: retry
+      │   └─ 其他 → action: deferred
       │
       ├─ action == "retry" && 預算夠？
-      │   ├─ YES → 保留原始 evidence → retry 一次（driver 自動重啟 App）
-      │   │         └─ 結果寫 state.json（含 original + retry 雙結果）
-      │   └─ NO  → 標 deferred，寫 state.json
+      │   ├─ YES → 保留原始 evidence → retry 一次
+      │   └─ NO  → 標 deferred
       │
-      └─ action == "deferred" / "no_healing" / "manual_review"
-          └─ 寫 state.json
+      └─ action == "deferred" → 寫 state.json，繼續下一個 test
 ```
 
-### Retry 不打架的原因
+### pytest_sessionfinish
 
-- `pytest_runtest_protocol` 用 `tryfirst=True` 完全接管 test 執行
-- retry 在 protocol 內部完成，ReportPortal 只收到最終結果
-- `runtestprotocol(item, log=False)` 阻止中間結果外流
-- `driver()` fixture 是 function-scoped，retry 時自動重啟 App
+```
+所有 test 跑完
+  ├─ _finalize_state_json()
+  ├─ 掃 state.json 找 deferred cases
+  └─ 有 → Popen('python3 orchestrator.py {run_id}')
+       └─ 不 block pytest 退出，log 寫 phase2.log
+```
 
 ### Retry 預算
 
@@ -142,128 +151,87 @@ pytest 執行 test case
 |------|-----|
 | 每個 case 最多 retry | 1 次 |
 | 全域 retry case 數上限 | 3 個 |
-| 全域時間增幅上限 | +15% |
-
-### claude CLI 呼叫方式
-
-```python
-subprocess.run(
-    ["claude", "-p", prompt, "--output-format", "json"],
-    capture_output=True, text=True, timeout=60
-)
-```
-
-一次性呼叫：fail → 起來判斷 → 回傳 JSON → 關閉。不是長駐程序。
-
-### Test Registry 自動建立
-
-`pytest_collection_modifyitems` hook 在 pytest 收集完 test items 後自動執行：
-- 有 `@pytest.mark.case_id` → 用指定 ID
-- 沒有 → 自動生成 `PHD-IOS-AUTO-XXXX`
-- 骨架寫入 `registry/test_registry.json`
-- feature、app_area、primary_test_component 留 null，Phase 2 root cause agent 會自動補齊
 
 ---
 
-## Phase 2 流程（Workflow）
+## Phase 2 流程（orchestrator.py）
 
-### 啟動方式
-
-```bash
-# 在 Claude Code 中執行
-claude workflow run workflow/auto_healing.js --args '{"run_id": "run-20260701-220000"}'
-```
-
-### 6 個 Phase
-
-| Phase | 動作 | 並行/序列 |
-|-------|------|-----------|
-| **Load** | 讀 state.json，過濾 deferred cases | — |
-| **Root Cause Analysis** | 每個 deferred case 呼叫 root cause agent | **parallel** |
-| **Healing** | L3-eligible cases：patch → replay | **sequential**（單一 device） |
-| **Reconciliation** | JS 邏輯合併所有結果為 final_status | — |
-| **Report & PR** | 生成 HTML report，通過 checklist 則建 PR | — |
-| **Knowledge** | 從 approved event 萃取長期知識 | — |
-
-### Healing 迴圈
+### 三個階段
 
 ```
-for each L3-eligible case:
-    for attempt 1..3:
-        patch = agent(patch-generation, root_cause)
-        if not patch.created → break
-
-        replay = agent(replay-verification, patch)
-        if replay == pass_with_healing → HEALED, break
-        if replay requires assertion change → STOP
-        if replay == product_bug / infra_issue → STOP
-        
-        # else: try next patch attempt
-```
-
-- 最多 3 次不同 patch，同一份 patch 不重跑
-- Replay 用 pytest 執行單一 case（`--override-ini="rp_enabled=false"`）
-
----
-
-## Sub-agent 架構
-
-### Agent 與 Workflow 的關係
-
-```
-Workflow (auto_healing.js)          ← JS 腳本，不是 AI agent
+orchestrator.py(run_id)
   │
-  ├─ agent(prompt + SKILL.md path)  ← 每次呼叫一個 sub-agent
+  ├─ 1. Analyze & Patch ─── ThreadPoolExecutor (max 3 parallel)
+  │     每個 case 一個 claude -p 呼叫
+  │     agent type: analyze-and-patch (opus 4.6)
+  │     agent 讀 evidence → 分類 root cause → 產生 patch → 直接 Edit source files
+  │     agent 寫 result.json 到 runs/{run_id}/analysis/{case_id}/
+  │     orchestrator 讀 result.json 取回結果
   │     │
-  │     ├─ 讀 SKILL.md 了解角色和規則
-  │     ├─ 讀 evidence / test code
-  │     └─ 回傳 structured JSON（schema 強制）
+  │     ├─ patch_created=true → 進 Replay
+  │     └─ patch_created=false → 標 manual_review_required
   │
-  ├─ Workflow 用 JS 邏輯處理 agent 回傳
-  └─ Workflow 寫入 state.json
+  ├─ 2. Replay ─── for loop (sequential，一次一個 case)
+  │     每個 case 最多 10 次循環：
+  │     │
+  │     │  ┌─ replay.py (subprocess: pytest) ─── 不用 AI
+  │     │  │   exit_code==0 → HEALED，跳出
+  │     │  │   exit_code>=2 → infra issue，停止
+  │     │  │   exit_code==1 → test failed
+  │     │  │
+  │     │  └─ claude -p re-analyze (analyze-and-patch agent)
+  │     │       patch_created=true → 回到 replay
+  │     │       patch_created=false → 停止（含 requires_assertion_change 等原因）
+  │     │
+  │     └─ 決策完全由 Python 邏輯控制，不靠 AI 判斷「要不要繼續」
+  │
+  └─ 3. Finalize ─── 純 Python，不用 AI
+        ├─ update_state.py → 更新 state.json
+        └─ generate_report.py → 產生 report.html
 ```
 
-Sub-agent 不直接寫 state.json，只回傳 structured output。Workflow 統一管理狀態。
+### 決策邏輯（Python，不是 AI）
 
-### 6 個 Agent Skill
-
-| Skill | Gate | 呼叫時機 | 輸出格式 |
-|-------|------|---------|---------|
-| `auto-healing-phase1-decision` | G06+G08 | Phase 1 claude CLI | `{ lane, action, preliminary_category, reason }` |
-| `auto-healing-root-cause` | G07 | Phase 2 parallel | Root cause + L3 eligibility + identity enrichment |
-| `auto-healing-patch-generation` | G11 | Phase 2 per case | Patch diff + risk flags + shared locator handling |
-| `auto-healing-replay-verification` | G12 | Phase 2 sequential | Replay status + pass conditions + evidence |
-| `auto-healing-html-report-approval` | G14 | Phase 2 per run | 12-item checklist + decision |
-| `auto-healing-knowledge-promotion` | G16 | Phase 2 per run | Knowledge entries (candidate/trusted/deprecated) |
-
-### Reference Skills（不給 agent 讀，保留作為文件）
-
-failure-evidence、failure-taxonomy、l3-eligibility、scheduling-decision、
-retry-policy、pass-baseline、previous-result-history、final-reconciliation、
-pr-generation、new-case-generator、metrics、test-identity、workflow
+| 條件 | 動作 |
+|------|------|
+| `replay exit_code == 0` | HEALED，跳出 |
+| `replay exit_code >= 2` | infra issue，停止 |
+| `re-analyze patch_created == false` | 無法修復，停止 |
+| `attempt >= 10` | 超過上限，停止 |
+| 其他 | 繼續下一次 loop |
 
 ---
 
-## 16-Gate Pipeline 對照表
+## Agent 使用概覽
 
-| Gate | 名稱 | 處理方式 | Phase |
-|------|------|---------|-------|
-| G01 | Test Identity | conftest.py (`pytest_collection_modifyitems`) | 1 |
-| G02 | Context Capture | conftest.py（已完成，metadata.json） | 1 |
-| G03 | Previous Result | Workflow JS（查 history.json） | 2 |
-| G04 | Pass Baseline | conftest.py（`_cleanup_passed_evidence`） | 1 |
-| G05 | Failure Evidence | conftest.py（rule-based 驗完整性） | 1 |
-| G06 | Preliminary Classify | Phase 1 claude CLI | 1 |
-| G07 | AI Root Cause | **Sub-agent**（root-cause） | 2 |
-| G08 | Scheduling Decision | Phase 1 claude CLI | 1 |
-| G09 | Immediate Action | conftest.py（`pytest_runtest_protocol` retry） | 1 |
-| G10 | Deferred Queue | Workflow JS（排序 deferred cases） | 2 |
-| G11 | Patch Generation | **Sub-agent**（patch-generation） | 2 |
-| G12 | Replay Verification | **Sub-agent**（replay-verification） | 2 |
-| G13 | Final Reconciliation | Workflow JS（合併狀態） | 2 |
-| G14 | HTML Report | **Sub-agent**（html-report-approval） | 2 |
-| G15 | PR Generation | Workflow JS + `gh pr create` | 2 |
-| G16 | Knowledge Promotion | **Sub-agent**（knowledge-promotion） | 2 |
+### 唯一的 AI agent：analyze-and-patch
+
+| 項目 | 值 |
+|------|-----|
+| 定義位置 | `.claude/agents/analyze-and-patch.md` |
+| Model | `claude-opus-4-6` |
+| 呼叫方式 | `claude -p`（orchestrator subprocess） |
+| 職責 | 讀 evidence → root cause 分類 → L3 判定 → patch 生成 → apply patch → 寫 result.json |
+| 工具 | Read, Edit, Bash, Write |
+
+### 不需要 AI 的部分
+
+| 功能 | 處理方式 |
+|------|---------|
+| Phase 1 分類 | Python heuristic（`_classify_failure_heuristic`） |
+| Replay | `replay.py`（subprocess pytest） |
+| State 更新 | `update_state.py` |
+| HTML Report | `generate_report.py`（固定模板） |
+| 決策邏輯 | `orchestrator.py`（exit code + patch_created） |
+
+### 預估 Token 用量（1 case）
+
+| 情境 | claude -p 呼叫數 | 估計 tokens |
+|------|-----------------|------------|
+| 一次 heal 成功 | 1 analyze | ~50K |
+| 3 次 replay | 1 analyze + 2 re-analyze | ~150K |
+| 10 次 replay | 1 analyze + 9 re-analyze | ~500K |
+| 不符合 L3 | 1 analyze | ~50K |
 
 ---
 
@@ -271,37 +239,31 @@ pr-generation、new-case-generator、metrics、test-identity、workflow
 
 ```jsonc
 {
-  "run_id": "run-20260701-220000",
-  "app_version": "20.10.0",
-  "phase": "phase_1 | phase_2_root_cause | phase_2_healing | phase_2_report | done",
+  "run_id": "20260702095018",
+  "phase": "done",
 
   "cases": {
-    "PHD-IOS-IMPORT-001": {
-      // Identity
-      "case_name": "test_import_photo_from_album",
-      "test_file": "SFT/tests/test_file.py::TestClass::test_method",
+    "PHD-IOS-AUTO-0001": {
+      "case_name": "test_ai_hairstyle_custom",
+      "test_file": "SFT/test_pytest_iPHD_SFT_renew.py::...",
 
       // Phase 1
       "original_status": "fail",
-      "error_summary": "Element 'import_button' not found",
-      "evidence_path": "Self-healing/evidence/20260701-223045-test_import_photo/",
-      "scheduling": { "lane": "C", "action": "deferred", "preliminary_category": "locator_drift" },
-      "retry": null,  // or { count, reason, result, status_after, evidence_path }
+      "error_summary": "NoSuchElementException: ...",
+      "evidence_path": "Self-healing/evidence/20260702...-test_ai_hairstyle_custom/",
+      "scheduling": { "lane": "C", "action": "deferred", "preliminary_category": "unknown" },
+      "retry": null,
 
-      // Phase 2（Workflow 寫入）
-      "root_cause": null,  // { type, confidence, reason, healable, l3_eligible, risk_flags }
-      "patch": null,       // { status, diff_summary, risk_flags }
-      "replay": null,      // { status, attempts }
-      "final_status": null, // pass_with_healing | healing_failed | manual_review_required | ...
-      "pr_eligible": false
+      // Phase 2（orchestrator 寫入）
+      "root_cause": { "type": "locator_drift", "confidence": 0.92, "reason": "...", "l3_eligible": true },
+      "patch": { "status": "generated", "diff_summary": "Updated btn_hairstyle accessibility id" },
+      "replay": { "status": "pass_with_healing", "attempts": 1 },
+      "final_status": "pass_with_healing",
+      "pr_eligible": true
     }
   },
 
-  "summary": {
-    "total": 200, "pass": 180, "fail": 5,
-    "pass_with_healing": 3, "pass_after_retry": 8,
-    "deferred": 2, "manual_review": 1, "product_bug": 1
-  }
+  "summary": { "total": 1, "healed": 1, "healing_failed": 0, "not_eligible": 0 }
 }
 ```
 
@@ -311,35 +273,32 @@ pr-generation、new-case-generator、metrics、test-identity、workflow
 
 1. **AI 不能修改** assertion、expected value、golden image、comparison rule、test intent
 2. **AI 修復後**標 `pass_with_healing`，不可標成普通 `pass`
-3. **HTML report** 是主要人工審核介面，`approve_merge_allowed` 後才允許 merge PR
-4. **每輪 AT run** 最多一個 Auto-Healing PR
-5. **同一份 patch** 不重複 replay；最多 3 個不同 patch
-6. **Knowledge** 需 approved event 才能 promotion，單次 approved 為 candidate
-7. **Replay** 關閉 ReportPortal（`rp_enabled=false`），不影響主報告數據
-8. **Retry** 在 `pytest_runtest_protocol` 內部完成，對 pytest/RP 不可見
+3. **每輪 AT run** 最多一個 Auto-Healing PR
+4. **同一份 patch** 不重複 replay；re-analyze 必須產生不同 patch
+5. **Replay** 關閉 ReportPortal（`rp_enabled=false`），不影響主報告數據
+6. **Retry** 在 `pytest_runtest_protocol` 內部完成，對 pytest/RP 不可見
 
 ---
 
 ## 如何執行
 
-### Phase 1（AT run 時自動啟動）
+### 自動（正常流程）
 
 ```bash
 cd /Users/rdqe/Desktop/rdqe-ios-autotest-phdm
 pytest SFT/tests/ -m "online"
-# conftest.py 會自動：
-# - 建 state.json
-# - 建 test_registry.json
-# - 每個 fail 呼叫 claude CLI 做 triage
-# - 需要 retry 的 case 在 protocol 內重跑
+# conftest.py 自動：
+#   1. 每個 fail → heuristic 分類 → retry 或 deferred
+#   2. 全部跑完 → sessionfinish 自動啟動 orchestrator.py
+#   3. orchestrator.py 平行分析 → 序列 replay → 更新 state + 產生 report
 ```
 
-### Phase 2（AT run 結束後手動啟動）
+### 手動（僅 Phase 2）
 
 ```bash
-# 在 Claude Code 中
-cd /Users/rdqe/Desktop/iOS_auto_healing_skills
-# 執行 Workflow，傳入 run_id
-```
+# 直接呼叫 orchestrator
+python3 /Users/rdqe/Desktop/iOS_auto_healing_skills/tools/orchestrator.py {run_id}
 
-Workflow 會自動執行 root cause → patch → replay → report → PR → knowledge 全流程。
+# 或用 Claude Code Workflow（backup）
+# Workflow tool: scriptPath="workflow/auto_healing.js", args={run_id, cases}
+```
