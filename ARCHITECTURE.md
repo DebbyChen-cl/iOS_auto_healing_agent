@@ -44,23 +44,30 @@
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Phase 2: After AT Run                          │
-│                   （Python orchestrator + claude -p）                │
+│                   （orchestrator.py + claude -p）                    │
 │                                                                     │
-│  orchestrator.py                                                    │
-│  ┌───────────────┐    ┌───────────┐    ┌───────────────┐            │
-│  │ Analyze &     │    │ Replay    │    │ Finalize      │            │
-│  │ Patch         │───▶│ (pytest)  │───▶│ (Python)      │            │
-│  │ (claude -p)   │    │ 直接執行   │    │ state + report│            │
-│  │ 【parallel】   │    │【sequential】  │ 無 AI          │            │
-│  └───────────────┘    └─────┬─────┘    └───────────────┘            │
-│                             │                                       │
-│                        fail?│                                       │
-│                             ▼                                       │
-│                       ┌───────────┐                                 │
-│                       │ Re-analyze│                                 │
-│                       │ (claude -p)──── 新 patch → 回到 Replay       │
-│                       │ max 10 次  │                                 │
-│                       └───────────┘                                 │
+│  for each case (sequential):                                        │
+│  ┌──────────────────────────────────────────────────┐               │
+│  │ 一個 claude -p session（max-turns 50）              │               │
+│  │                                                    │               │
+│  │  ┌─ Read evidence ──── 只讀一次                     │               │
+│  │  ├─ Root cause 分類                                │               │
+│  │  ├─ Generate patch → Edit source                   │               │
+│  │  │                                                  │               │
+│  │  │  ┌─ Bash: replay.py ──── 不用 AI                │               │
+│  │  │  │   pass → result.json → END                   │               │
+│  │  │  │   infra → result.json → END                  │               │
+│  │  │  │   fail ↓                                     │               │
+│  │  │  │                                              │               │
+│  │  │  └─ Re-analyze（同 session）                     │               │
+│  │  │       新 patch → 回到 replay.py                  │               │
+│  │  │       max 10 次                                  │               │
+│  │  └─ Write result.json → END                        │               │
+│  └──────────────────────────────────────────────────┘               │
+│                                                                     │
+│  Finalize（Python，無 AI）                                           │
+│  ├─ update_state.py → state.json                                    │
+│  └─ generate_report.py → report.html                                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -71,20 +78,21 @@
 ```
 /Users/rdqe/Desktop/iOS_auto_healing_skills/       ← 本 Repo（Auto-Healing）
 ├── ARCHITECTURE.md              # 本文件
+├── WORKFLOW.md                  # 詳細流程圖（含 input/output）
 ├── SPEC/                        # 14 份規格文件
 ├── .claude/agents/
-│   └── analyze-and-patch.md     # 合併的 root-cause + patch agent type (opus 4.6)
+│   └── analyze-and-patch.md     # 合併的 root-cause + patch agent（opus 4.6）
 ├── auto_healing_skills/         # Sub-agent skills（保留作為規則參考）
 │   ├── auto-healing-root-cause/       SKILL.md
 │   ├── auto-healing-patch-generation/ SKILL.md
 │   └── (其他 reference skills)
 ├── tools/                       # Python 工具（無 AI）
-│   ├── orchestrator.py          # Phase 2 主控（parallel claude -p + sequential replay）
+│   ├── orchestrator.py          # Phase 2 主控（每 case 一個 claude -p session）
 │   ├── replay.py                # 跑 pytest，解析結果，回傳 JSON
 │   ├── update_state.py          # 更新 state.json
 │   └── generate_report.py       # 從 state.json 產生 HTML report（固定模板）
 ├── workflow/
-│   └── auto_healing.js          # Backup：僅 parallel analyze-and-patch（用 Workflow tool）
+│   └── auto_healing.js          # Backup：僅 parallel analyze-and-patch（Workflow tool）
 ├── runs/                        # 每次 AT run 的輸出
 │   └── {run_id}/
 │       ├── state.json
@@ -156,49 +164,27 @@ pytest 執行 test case
 
 ## Phase 2 流程（orchestrator.py）
 
-### 三個階段
+### 核心設計：一個 case = 一個 claude -p session
 
-```
-orchestrator.py(run_id)
-  │
-  ├─ 1. Analyze & Patch ─── ThreadPoolExecutor (max 3 parallel)
-  │     每個 case 一個 claude -p 呼叫
-  │     agent type: analyze-and-patch (opus 4.6)
-  │     agent 讀 evidence → 分類 root cause → 產生 patch → 直接 Edit source files
-  │     agent 寫 result.json 到 runs/{run_id}/analysis/{case_id}/
-  │     orchestrator 讀 result.json 取回結果
-  │     │
-  │     ├─ patch_created=true → 進 Replay
-  │     └─ patch_created=false → 標 manual_review_required
-  │
-  ├─ 2. Replay ─── for loop (sequential，一次一個 case)
-  │     每個 case 最多 10 次循環：
-  │     │
-  │     │  ┌─ replay.py (subprocess: pytest) ─── 不用 AI
-  │     │  │   exit_code==0 → HEALED，跳出
-  │     │  │   exit_code>=2 → infra issue，停止
-  │     │  │   exit_code==1 → test failed
-  │     │  │
-  │     │  └─ claude -p re-analyze (analyze-and-patch agent)
-  │     │       patch_created=true → 回到 replay
-  │     │       patch_created=false → 停止（含 requires_assertion_change 等原因）
-  │     │
-  │     └─ 決策完全由 Python 邏輯控制，不靠 AI 判斷「要不要繼續」
-  │
-  └─ 3. Finalize ─── 純 Python，不用 AI
-        ├─ update_state.py → 更新 state.json
-        └─ generate_report.py → 產生 report.html
-```
+每個 deferred case 由一個 `claude -p --max-turns 50` session 處理全部工作：
+analyze → patch → replay（Bash）→ re-analyze（同 session）→ loop。
 
-### 決策邏輯（Python，不是 AI）
+Re-analyze 不開新 session — evidence 已在 context 中，只需看新 error。
+
+### 決策邏輯（orchestrator.py，Python）
 
 | 條件 | 動作 |
 |------|------|
-| `replay exit_code == 0` | HEALED，跳出 |
-| `replay exit_code >= 2` | infra issue，停止 |
-| `re-analyze patch_created == false` | 無法修復，停止 |
-| `attempt >= 10` | 超過上限，停止 |
-| 其他 | 繼續下一次 loop |
+| result.json `healed == true` | 記錄成功 |
+| result.json 無法讀取 | 記錄失敗 |
+| 全部 case 完成 | 進 Finalize |
+
+### Finalize（Python，無 AI）
+
+| 步驟 | 工具 | 做什麼 |
+|------|------|--------|
+| 1 | `update_state.py` | 讀 healing_results.json → 更新 state.json |
+| 2 | `generate_report.py` | 讀 state.json → 產生 report.html（固定模板） |
 
 ---
 
@@ -211,7 +197,7 @@ orchestrator.py(run_id)
 | 定義位置 | `.claude/agents/analyze-and-patch.md` |
 | Model | `claude-opus-4-6` |
 | 呼叫方式 | `claude -p`（orchestrator subprocess） |
-| 職責 | 讀 evidence → root cause 分類 → L3 判定 → patch 生成 → apply patch → 寫 result.json |
+| 職責 | 讀 evidence → root cause 分類 → L3 判定 → patch 生成 → apply patch → replay loop → 寫 result.json |
 | 工具 | Read, Edit, Bash, Write |
 
 ### 不需要 AI 的部分
@@ -219,19 +205,9 @@ orchestrator.py(run_id)
 | 功能 | 處理方式 |
 |------|---------|
 | Phase 1 分類 | Python heuristic（`_classify_failure_heuristic`） |
-| Replay | `replay.py`（subprocess pytest） |
+| Replay 執行 | `replay.py`（agent 透過 Bash 呼叫） |
 | State 更新 | `update_state.py` |
 | HTML Report | `generate_report.py`（固定模板） |
-| 決策邏輯 | `orchestrator.py`（exit code + patch_created） |
-
-### 預估 Token 用量（1 case）
-
-| 情境 | claude -p 呼叫數 | 估計 tokens |
-|------|-----------------|------------|
-| 一次 heal 成功 | 1 analyze | ~50K |
-| 3 次 replay | 1 analyze + 2 re-analyze | ~150K |
-| 10 次 replay | 1 analyze + 9 re-analyze | ~500K |
-| 不符合 L3 | 1 analyze | ~50K |
 
 ---
 
@@ -290,15 +266,11 @@ pytest SFT/tests/ -m "online"
 # conftest.py 自動：
 #   1. 每個 fail → heuristic 分類 → retry 或 deferred
 #   2. 全部跑完 → sessionfinish 自動啟動 orchestrator.py
-#   3. orchestrator.py 平行分析 → 序列 replay → 更新 state + 產生 report
+#   3. orchestrator.py 逐 case 分析+修復 → 更新 state + 產生 report
 ```
 
 ### 手動（僅 Phase 2）
 
 ```bash
-# 直接呼叫 orchestrator
 python3 /Users/rdqe/Desktop/iOS_auto_healing_skills/tools/orchestrator.py {run_id}
-
-# 或用 Claude Code Workflow（backup）
-# Workflow tool: scriptPath="workflow/auto_healing.js", args={run_id, cases}
 ```
