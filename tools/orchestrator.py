@@ -10,23 +10,76 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 HEALING_PROJECT = os.environ.get(
-    'HEALING_PROJECT', '/Users/rdqe/Desktop/iOS_auto_healing_skills'
+    'HEALING_PROJECT', os.path.dirname(TOOLS_DIR)
 )
 TEST_PROJECT = os.environ.get(
-    'TEST_PROJECT', '/Users/rdqe/Desktop/rdqe-ios-autotest-phdm'
+    'TEST_PROJECT',
+    os.path.join(os.path.dirname(HEALING_PROJECT), 'rdqe-ios-autotest-phdm-auto-heal'),
 )
 MAX_ATTEMPTS = 10
 
-TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 AGENT_MD = os.path.join(HEALING_PROJECT, '.claude', 'agents', 'analyze-and-patch.md')
 
 
 def _log(msg):
     ts = time.strftime('%H:%M:%S')
     print(f'[{ts}] {msg}', flush=True)
+
+
+def _describe_tool(name, tool_input):
+    tool_input = tool_input or {}
+    if name == 'Bash':
+        cmd = tool_input.get('command', '')
+        desc = tool_input.get('description', '')
+        if 'replay.py' in cmd:
+            return f'running replay ({desc or cmd})'
+        return f'Bash: {desc or cmd[:160]}'
+    if name == 'Edit':
+        return f'editing {tool_input.get("file_path", "?")}'
+    if name == 'Write':
+        return f'writing {tool_input.get("file_path", "?")}'
+    if name == 'Read':
+        return f'reading {tool_input.get("file_path", "?")}'
+    return name
+
+
+def _print_stream_event(case_id, obj):
+    """Print a single stream-json event from the claude session as a
+    human-readable progress line. Pure printing — no extra AI calls."""
+    etype = obj.get('type')
+
+    if etype == 'assistant':
+        for block in obj.get('message', {}).get('content', []):
+            btype = block.get('type')
+            if btype == 'text':
+                text = block.get('text', '').strip()
+                if text:
+                    _log(f'  [{case_id}] {text}')
+            elif btype == 'tool_use':
+                _log(f'  [{case_id}] → {_describe_tool(block.get("name"), block.get("input"))}')
+
+    elif etype == 'user':
+        for block in obj.get('message', {}).get('content', []):
+            if block.get('type') != 'tool_result':
+                continue
+            content = block.get('content')
+            if isinstance(content, list):
+                content = '\n'.join(
+                    c.get('text', '') for c in content if isinstance(c, dict)
+                )
+            if isinstance(content, str) and content.strip():
+                snippet = '\n'.join(content.strip().splitlines()[:15])
+                for snippet_line in snippet.splitlines():
+                    _log(f'  [{case_id}]     {snippet_line}')
+
+    elif etype == 'result':
+        _log(f'  [{case_id}] session done: {obj.get("num_turns", "?")} turns, '
+             f'{obj.get("duration_ms", "?")}ms')
 
 
 def _read_agent_instructions():
@@ -48,6 +101,15 @@ def heal_case(case, run_id):
     os.makedirs(result_dir, exist_ok=True)
     result_path = os.path.join(result_dir, 'result.json')
 
+    # The claude -p session is sandboxed to TEST_PROJECT — it has no filesystem
+    # access outside it, so it can't write result.json directly under
+    # HEALING_PROJECT. Have it write inside TEST_PROJECT instead, then this
+    # (unsandboxed) parent process copies the file over afterward.
+    session_result_dir = os.path.join(TEST_PROJECT, 'Self-healing', 'analysis', case_id)
+    os.makedirs(session_result_dir, exist_ok=True)
+    session_result_path = os.path.join(session_result_dir, 'result.json')
+    context_path = os.path.join(session_result_dir, 'context.json')
+
     instructions = _read_agent_instructions()
     prompt = f"""{instructions}
 
@@ -63,15 +125,18 @@ Test project root: {TEST_PROJECT}
 
 Steps:
 1. Read evidence files, classify root cause, determine L3 eligibility
-2. If NOT L3-eligible → write result.json and stop
+2. If NOT L3-eligible → write your root_cause (and patch.reason) summary to {context_path} as {{"root_cause": {{...}}, "patch": null}}, then run:
+   python3 {TOOLS_DIR}/replay.py "{case.get('test_file', '')}" "{TEST_PROJECT}" --not-healed-reason "<short reason from root_cause.reason>"
+   This does NOT run the real test — it only records a SKIPPED entry (same test name) in the report, carrying the reason. Then write result.json and stop.
 3. Generate patch and apply it directly to source files
-4. Run replay: python3 {TOOLS_DIR}/replay.py "{case.get('test_file', '')}" "{TEST_PROJECT}"
+4. Before each replay attempt, write your current root_cause + patch summary to {context_path} (same shape as the Result JSON's root_cause/patch fields), then run replay:
+   python3 {TOOLS_DIR}/replay.py "{case.get('test_file', '')}" "{TEST_PROJECT}" --context-file "{context_path}"
 5. Parse the JSON from stdout
 6. If test_passed == true → healed, write result.json and stop
 7. If exit_code >= 2 → infra error, write result.json and stop
-8. If test failed → re-analyze using the new error (you already have all context), generate a DIFFERENT patch, go back to step 4
+8. If test failed → re-analyze using the new error (you already have all context), generate a DIFFERENT patch, update {context_path}, go back to step 4
 9. Maximum {MAX_ATTEMPTS} replay attempts
-10. Write final result to: {result_path}
+10. Write final result to: {session_result_path}
 
 Result JSON format:
 {{
@@ -83,21 +148,52 @@ Result JSON format:
 
     _log(f'  [{case_id}] starting session (analyze → patch → replay loop)...')
 
-    result = subprocess.run(
-        ['claude', '-p', prompt, '--max-turns', '50'],
-        capture_output=True, text=True, timeout=1800,
-        cwd=TEST_PROJECT,
+    proc = subprocess.Popen(
+        ['claude', '-p', prompt, '--max-turns', '50',
+         '--permission-mode', 'acceptEdits',
+         '--output-format', 'stream-json', '--verbose'],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, cwd=TEST_PROJECT,
     )
 
-    if result.returncode != 0:
-        _log(f'  [{case_id}] claude session failed (exit {result.returncode})')
+    timed_out = threading.Event()
+    timer = threading.Timer(1800, lambda: (timed_out.set(), proc.kill()))
+    timer.start()
 
     try:
-        with open(result_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        for line in proc.stdout:
+            line = line.rstrip('\n')
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                _log(f'  [{case_id}] {line}')
+                continue
+            _print_stream_event(case_id, obj)
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    if timed_out.is_set():
+        _log(f'  [{case_id}] claude session timed out (1800s)')
+    elif proc.returncode != 0:
+        _log(f'  [{case_id}] claude session failed (exit {proc.returncode})')
+
+    try:
+        with open(session_result_path, 'r', encoding='utf-8') as f:
+            parsed = json.load(f)
     except Exception as e:
         _log(f'  [{case_id}] failed to read result: {e}')
         return None
+
+    try:
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(parsed, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        _log(f'  [{case_id}] failed to archive result to {result_path}: {e}')
+
+    return parsed
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
