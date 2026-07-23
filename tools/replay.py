@@ -38,9 +38,11 @@ def replay(test_nodeid, test_project, attempt=1, context_file=None, not_healed_r
     if not_healed_reason:
         env['AUTO_HEALING_NOT_HEALED_REASON'] = not_healed_reason
 
+    REPLAY_TIMEOUT = 5400  # 90 min — some cases run long test flows
+
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=test_project, timeout=600, env=env,
+            cmd, capture_output=True, text=True, cwd=test_project, timeout=REPLAY_TIMEOUT, env=env,
         )
     except subprocess.TimeoutExpired:
         return {
@@ -48,7 +50,7 @@ def replay(test_nodeid, test_project, attempt=1, context_file=None, not_healed_r
             'exit_code': 2,
             'attempt_number': attempt,
             'replay_status': 'infra_issue',
-            'new_error_summary': 'pytest timed out (120s)',
+            'new_error_summary': f'pytest timed out ({REPLAY_TIMEOUT}s)',
             'stdout': '',
         }
 

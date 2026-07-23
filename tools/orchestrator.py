@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Phase 2 orchestrator.
-- One claude -p session per case: analyze → patch → replay → re-analyze loop (same session)
-- Replay runs via Bash inside the session (replay.py, no extra AI)
+- One claude -p session per case (via --session-id / --resume): analyze + patch only.
+- Orchestrator (this process) runs replay.py directly and drives the
+  replay -> re-analyze loop — claude never executes pytest itself.
 - State update + report via Python scripts (no AI)
 """
 
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 HEALING_PROJECT = os.environ.get(
@@ -22,8 +24,47 @@ TEST_PROJECT = os.environ.get(
     os.path.join(os.path.dirname(HEALING_PROJECT), 'rdqe-ios-autotest-phdm-auto-heal'),
 )
 MAX_ATTEMPTS = 10
+REPLAY_TIMEOUT = 5400  # 90 min — some cases run long test flows
+CLAUDE_TURN_TIMEOUT = 900  # 15 min — one analyze/patch turn, no test execution inside it
 
 AGENT_MD = os.path.join(HEALING_PROJECT, '.claude', 'agents', 'analyze-and-patch.md')
+
+DECISION_SCHEMA = {
+    'type': 'object',
+    'required': ['root_cause', 'patch'],
+    'properties': {
+        'root_cause': {
+            'type': 'object',
+            'required': ['type', 'confidence', 'reason', 'healable', 'l3_eligible'],
+            'properties': {
+                'type': {'type': 'string'},
+                'confidence': {'type': 'number'},
+                'reason': {'type': 'string'},
+                'evidence_used': {'type': 'array', 'items': {'type': 'string'}},
+                'excluded_causes': {'type': 'array', 'items': {'type': 'string'}},
+                'healable': {'type': 'boolean'},
+                'l3_eligible': {'type': 'boolean'},
+                'blocking_impact': {'type': 'string'},
+                'healing_risk': {'type': 'string'},
+                'allowed_patch_boundary': {'type': 'string'},
+                'risk_flags': {'type': 'array', 'items': {'type': 'string'}},
+            },
+        },
+        'patch': {
+            'type': ['object', 'null'],
+            'required': ['patch_created'],
+            'properties': {
+                'patch_created': {'type': 'boolean'},
+                'patch_type': {'type': 'string'},
+                'changed_files': {'type': 'array'},
+                'diff_summary': {'type': 'string'},
+                'shared_locator_handling': {'type': 'string'},
+                'risk_flags': {'type': 'array', 'items': {'type': 'string'}},
+                'reason': {'type': 'string'},
+            },
+        },
+    },
+}
 
 
 def _log(msg):
@@ -36,8 +77,6 @@ def _describe_tool(name, tool_input):
     if name == 'Bash':
         cmd = tool_input.get('command', '')
         desc = tool_input.get('description', '')
-        if 'replay.py' in cmd:
-            return f'running replay ({desc or cmd})'
         return f'Bash: {desc or cmd[:160]}'
     if name == 'Edit':
         return f'editing {tool_input.get("file_path", "?")}'
@@ -49,7 +88,7 @@ def _describe_tool(name, tool_input):
 
 
 def _print_stream_event(case_id, obj):
-    """Print a single stream-json event from the claude session as a
+    """Print a single stream-json event from the claude turn as a
     human-readable progress line. Pure printing — no extra AI calls."""
     etype = obj.get('type')
 
@@ -60,7 +99,7 @@ def _print_stream_event(case_id, obj):
                 text = block.get('text', '').strip()
                 if text:
                     _log(f'  [{case_id}] {text}')
-            elif btype == 'tool_use':
+            elif btype == 'tool_use' and block.get('name') != 'StructuredOutput':
                 _log(f'  [{case_id}] → {_describe_tool(block.get("name"), block.get("input"))}')
 
     elif etype == 'user':
@@ -78,7 +117,7 @@ def _print_stream_event(case_id, obj):
                     _log(f'  [{case_id}]     {snippet_line}')
 
     elif etype == 'result':
-        _log(f'  [{case_id}] session done: {obj.get("num_turns", "?")} turns, '
+        _log(f'  [{case_id}] turn done: {obj.get("num_turns", "?")} turns, '
              f'{obj.get("duration_ms", "?")}ms')
 
 
@@ -91,75 +130,28 @@ def _read_agent_instructions():
     return content
 
 
-# ─── One session per case: analyze + patch + replay loop ─────────────────────
+# ─── One claude turn: analyze + patch (no test execution) ────────────────────
 
-def heal_case(case, run_id):
-    """One claude -p session handles the full loop for one case.
-    Re-analysis stays in the same session — no re-reading evidence."""
-    case_id = case['case_id']
-    result_dir = os.path.join(HEALING_PROJECT, 'runs', run_id, 'analysis', case_id)
-    os.makedirs(result_dir, exist_ok=True)
-    result_path = os.path.join(result_dir, 'result.json')
-
-    # The claude -p session is sandboxed to TEST_PROJECT — it has no filesystem
-    # access outside it, so it can't write result.json directly under
-    # HEALING_PROJECT. Have it write inside TEST_PROJECT instead, then this
-    # (unsandboxed) parent process copies the file over afterward.
-    session_result_dir = os.path.join(TEST_PROJECT, 'Self-healing', 'analysis', case_id)
-    os.makedirs(session_result_dir, exist_ok=True)
-    session_result_path = os.path.join(session_result_dir, 'result.json')
-    context_path = os.path.join(session_result_dir, 'context.json')
-
-    instructions = _read_agent_instructions()
-    prompt = f"""{instructions}
-
-Your complete task for this case — do everything in this session:
-
-Case: {case_id}
-Name: {case.get('case_name', '')}
-Error: {case.get('error_summary', 'unknown')}
-Error type: {case.get('error_type', 'unknown')}
-Evidence: {TEST_PROJECT}/{case.get('evidence_path', '')}
-Test file: {TEST_PROJECT}/{case.get('test_file', '')}
-Test project root: {TEST_PROJECT}
-
-Steps:
-1. Read evidence files, classify root cause, determine L3 eligibility
-2. If NOT L3-eligible → write your root_cause (and patch.reason) summary to {context_path} as {{"root_cause": {{...}}, "patch": null}}, then run:
-   python3 {TOOLS_DIR}/replay.py "{case.get('test_file', '')}" "{TEST_PROJECT}" --not-healed-reason "<short reason from root_cause.reason>"
-   This does NOT run the real test — it only records a SKIPPED entry (same test name) in the report, carrying the reason. Then write result.json and stop.
-3. Generate patch and apply it directly to source files
-4. Before each replay attempt, write your current root_cause + patch summary to {context_path} (same shape as the Result JSON's root_cause/patch fields), then run replay:
-   python3 {TOOLS_DIR}/replay.py "{case.get('test_file', '')}" "{TEST_PROJECT}" --context-file "{context_path}"
-5. Parse the JSON from stdout
-6. If test_passed == true → healed, write result.json and stop
-7. If exit_code >= 2 → infra error, write result.json and stop
-8. If test failed → re-analyze using the new error (you already have all context), generate a DIFFERENT patch, update {context_path}, go back to step 4
-9. Maximum {MAX_ATTEMPTS} replay attempts
-10. Write final result to: {session_result_path}
-
-Result JSON format:
-{{
-  "root_cause": {{ type, confidence, reason, evidence_used, excluded_causes, healable, l3_eligible, blocking_impact, healing_risk, allowed_patch_boundary, risk_flags }},
-  "patch": {{ patch_created, patch_type, changed_files, diff_summary, shared_locator_handling, risk_flags, reason }},
-  "replay": {{ "status": "pass_with_healing"|"fail"|"infra_issue", "attempts": N }},
-  "healed": true|false
-}}"""
-
-    _log(f'  [{case_id}] starting session (analyze → patch → replay loop)...')
+def _run_claude_turn(prompt, session_id, resume, case_id):
+    """Run one headless claude turn. Returns the validated decision dict
+    (root_cause/patch) from structured_output, or None on failure/timeout."""
+    cmd = ['claude', '-p', prompt, '--max-turns', '30',
+           '--permission-mode', 'acceptEdits',
+           '--output-format', 'stream-json', '--verbose',
+           '--json-schema', json.dumps(DECISION_SCHEMA)]
+    cmd += ['--resume', session_id] if resume else ['--session-id', session_id]
 
     proc = subprocess.Popen(
-        ['claude', '-p', prompt, '--max-turns', '50',
-         '--permission-mode', 'acceptEdits',
-         '--output-format', 'stream-json', '--verbose'],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, cwd=TEST_PROJECT,
     )
 
     timed_out = threading.Event()
-    timer = threading.Timer(1800, lambda: (timed_out.set(), proc.kill()))
+    timer = threading.Timer(CLAUDE_TURN_TIMEOUT, lambda: (timed_out.set(), proc.kill()))
     timer.start()
 
+    structured = None
+    result_obj = None
     try:
         for line in proc.stdout:
             line = line.rstrip('\n')
@@ -171,29 +163,196 @@ Result JSON format:
                 _log(f'  [{case_id}] {line}')
                 continue
             _print_stream_event(case_id, obj)
+            if obj.get('type') == 'result':
+                result_obj = obj
+                structured = obj.get('structured_output')
         proc.wait()
     finally:
         timer.cancel()
 
     if timed_out.is_set():
-        _log(f'  [{case_id}] claude session timed out (1800s)')
-    elif proc.returncode != 0:
-        _log(f'  [{case_id}] claude session failed (exit {proc.returncode})')
+        _log(f'  [{case_id}] claude turn timed out ({CLAUDE_TURN_TIMEOUT}s)')
+        return None
+    if proc.returncode != 0 or structured is None:
+        err = (result_obj or {}).get('result')
+        _log(f'  [{case_id}] claude turn failed (exit {proc.returncode}): {err}')
+        return None
+    return structured
+
+
+# ─── Replay: plain Python subprocess, no Bash-tool timeout involved ──────────
+
+def _run_replay(case, context_file=None, not_healed_reason=None):
+    cmd = ['python3', os.path.join(TOOLS_DIR, 'replay.py'),
+           case.get('test_file', ''), TEST_PROJECT]
+    if context_file:
+        cmd += ['--context-file', context_file]
+    if not_healed_reason:
+        cmd += ['--not-healed-reason', not_healed_reason]
 
     try:
-        with open(session_result_path, 'r', encoding='utf-8') as f:
-            parsed = json.load(f)
-    except Exception as e:
-        _log(f'  [{case_id}] failed to read result: {e}')
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=REPLAY_TIMEOUT + 60,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            'test_passed': False, 'exit_code': 2, 'replay_status': 'infra_issue',
+            'new_error_summary': 'orchestrator-level replay timeout exceeded',
+            'stdout': '',
+        }
+
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {
+            'test_passed': False, 'exit_code': 2, 'replay_status': 'infra_issue',
+            'new_error_summary': f'replay.py produced no valid JSON: {proc.stdout[-500:]}',
+            'stdout': proc.stdout[-2000:],
+        }
+
+
+# ─── One case: analyze -> patch -> replay -> re-analyze loop ──────────────────
+
+def heal_case(case, run_id):
+    case_id = case['case_id']
+    result_dir = os.path.join(HEALING_PROJECT, 'runs', run_id, 'analysis', case_id)
+    os.makedirs(result_dir, exist_ok=True)
+    result_path = os.path.join(result_dir, 'result.json')
+    context_path = os.path.join(result_dir, 'context.json')
+
+    session_id = str(uuid.uuid4())
+    instructions = _read_agent_instructions()
+
+    def _write_result(root_cause, patch, replay_status, attempts, healed):
+        result = {
+            'root_cause': root_cause,
+            'patch': patch,
+            'replay': {'status': replay_status, 'attempts': attempts},
+            'healed': healed,
+        }
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+        return result
+
+    def _give_up(root_cause, patch, reason):
+        replay_result = _run_replay(case, not_healed_reason=reason)
+        return _write_result(root_cause, patch, replay_result.get('replay_status', 'not_healed'), 0, False)
+
+    initial_prompt = f"""{instructions}
+
+Your task for this case:
+
+Case: {case_id}
+Name: {case.get('case_name', '')}
+Error: {case.get('error_summary', 'unknown')}
+Error type: {case.get('error_type', 'unknown')}
+Evidence: {TEST_PROJECT}/{case.get('evidence_path', '')}
+Test file: {TEST_PROJECT}/{case.get('test_file', '')}
+Test project root: {TEST_PROJECT}
+
+Steps:
+1. Read evidence files, classify root cause, determine L3 eligibility.
+2. If NOT L3-eligible: do not patch. Return your decision with patch.patch_created=false and patch.reason set.
+3. If L3-eligible: generate the smallest patch and apply it directly to the source files in the test project (use Edit). Then return your decision with the patch details filled in.
+
+You will NOT run the test yourself — a separate process replays it and will come back to you with the result if it fails. Just return your analysis and patch decision as structured output now."""
+
+    _log(f'  [{case_id}] starting analyze+patch turn...')
+    decision = _run_claude_turn(initial_prompt, session_id, resume=False, case_id=case_id)
+    if decision is None:
         return None
 
-    try:
-        with open(result_path, 'w', encoding='utf-8') as f:
-            json.dump(parsed, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        _log(f'  [{case_id}] failed to archive result to {result_path}: {e}')
+    root_cause = decision.get('root_cause')
+    patch = decision.get('patch')
 
-    return parsed
+    if not root_cause.get('l3_eligible') or not patch or not patch.get('patch_created'):
+        reason = (patch or {}).get('reason') or root_cause.get('reason')
+        return _give_up(root_cause, patch, reason)
+
+    attempts = 0
+    while attempts < MAX_ATTEMPTS:
+        attempts += 1
+        with open(context_path, 'w', encoding='utf-8') as f:
+            json.dump({'root_cause': root_cause, 'patch': patch}, f, ensure_ascii=False)
+
+        _log(f'  [{case_id}] replay attempt {attempts}...')
+        replay_result = _run_replay(case, context_file=context_path)
+
+        if replay_result.get('test_passed'):
+            return _write_result(root_cause, patch, replay_result.get('replay_status', 'pass_with_healing'),
+                                  attempts, True)
+
+        if replay_result.get('exit_code', 0) >= 2:
+            return _write_result(root_cause, patch, 'infra_issue', attempts, False)
+
+        if attempts >= MAX_ATTEMPTS:
+            break
+
+        reanalyze_prompt = f"""Replay attempt {attempts} failed after your patch. New error from the test run:
+
+{replay_result.get('new_error_summary')}
+
+Test output (tail):
+{replay_result.get('stdout', '')[-2000:]}
+
+Re-analyze using this new evidence — you already have full context from before, no need to re-read the evidence files unless the new error suggests something you missed. Generate a DIFFERENT patch than before targeting the actual new failure. Apply it directly to the source files (use Edit). If you now determine the case is not fixable or not L3-eligible, set patch.patch_created=false with patch.reason and do not edit anything further.
+
+Return your updated decision as structured output."""
+
+        _log(f'  [{case_id}] re-analyzing after failed attempt {attempts}...')
+        decision = _run_claude_turn(reanalyze_prompt, session_id, resume=True, case_id=case_id)
+        if decision is None:
+            break
+
+        root_cause = decision.get('root_cause')
+        patch = decision.get('patch')
+
+        if not root_cause.get('l3_eligible') or not patch or not patch.get('patch_created'):
+            reason = (patch or {}).get('reason') or root_cause.get('reason')
+            return _give_up(root_cause, patch, reason)
+
+    return _write_result(root_cause, patch, 'fail', attempts, False)
+
+
+# ─── Commit + push healing changes to a new timestamped branch ──────────────
+
+def _run_git(args, cwd):
+    return subprocess.run(['git'] + args, cwd=cwd, capture_output=True, text=True)
+
+
+def _commit_and_push_healing_changes(run_id, healed_count, total_count):
+    """After heal completes, if any patches were applied to the test project,
+    commit them on a new branch '{current_branch}_YYMMDD_hhmmss' and push it."""
+    status = _run_git(['status', '--porcelain'], TEST_PROJECT)
+    if status.returncode != 0:
+        _log(f'  [git] status check failed: {status.stderr.strip()}')
+        return
+    if not status.stdout.strip():
+        _log('  [git] no changes to commit, skipping')
+        return
+
+    branch = _run_git(['rev-parse', '--abbrev-ref', 'HEAD'], TEST_PROJECT).stdout.strip()
+    if not branch or branch == 'HEAD':
+        _log('  [git] could not determine current branch, skipping commit')
+        return
+
+    new_branch = f'{branch}_{time.strftime("%y%m%d_%H%M%S")}'
+
+    steps = [
+        (['checkout', '-b', new_branch], 'create branch'),
+        (['add', '-A'], 'stage changes'),
+        (['commit', '-m',
+          f'Auto-heal: apply patches from run {run_id} ({healed_count}/{total_count} healed)'],
+         'commit'),
+        (['push', '-u', 'origin', new_branch], 'push'),
+    ]
+    for args, desc in steps:
+        result = _run_git(args, TEST_PROJECT)
+        if result.returncode != 0:
+            _log(f'  [git] {desc} failed: {result.stderr.strip()}')
+            return
+
+    _log(f'  [git] committed and pushed changes to {new_branch}')
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
@@ -247,6 +406,9 @@ def main(run_id, deferred_cases):
 
     healed_count = sum(1 for h in healing_results if h['healed'])
     _log(f'Done: {healed_count}/{len(deferred_cases)} healed')
+
+    _commit_and_push_healing_changes(run_id, healed_count, len(deferred_cases))
+
     return healing_results
 
 
